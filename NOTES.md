@@ -154,6 +154,58 @@ docker compose pull
 All nine must succeed. If one fails, fix that tag before going further; do not
 start the services that did pull and come back to it.
 
+### 3b. Accounts you need to obtain before the stack does anything useful
+
+The containers start fine with none of these. The *download path* does not work
+without at least one of each of the first three.
+
+| # | What | Needed for | Yields | Goes in |
+|---|---|---|---|---|
+| 1 | VPN provider | qBittorrent (gluetun killswitch) | WireGuard private key + address | `.env` |
+| 2 | Usenet provider | SABnzbd — the thing that actually downloads | host, port 563, user, pass | SABnzbd UI |
+| 3 | Usenet indexer(s) | Prowlarr — search over usenet | API key | Prowlarr UI |
+| 4 | Torrent trackers | Prowlarr — torrent side | varies; public need nothing | Prowlarr UI |
+| 5 | OpenSubtitles | Bazarr | username + password | Bazarr UI |
+| 6 | Domain registrar | contract §5.3, later | domain + DNS control | `palimpsest-system` |
+
+**A provider and an indexer are different things and you need both.** The
+provider stores the articles and is where bytes come from; the indexer is a
+search engine over what exists. One provider plus two or three indexers is the
+normal shape — indexers each miss things, and they are cheap.
+
+**1. VPN.** Only if you want the torrent half; usenet does not need it. The one
+decision that matters is **port forwarding**, which you need to seed. ProtonVPN
+and Private Internet Access both support it and gluetun can request it natively;
+AirVPN supports it but you configure it on their site; **Mullvad removed it in
+2023**, so it is a poor fit here despite otherwise being a good service. If you
+pick a port-forwarding provider, `compose.yaml` needs `VPN_PORT_FORWARDING=on`
+and a provider name added to the gluetun block — that is a change to make
+deliberately, not a default.
+
+**2. Usenet provider.** Unlimited accounts run ~$5–10/month, and the same
+handful of *backbones* sit behind many resellers — buying two accounts on the
+same backbone buys you nothing. Retention is ~5000+ days across the majors. A
+cheap unlimited primary plus a small block account on a *different* backbone
+covers what the first one is missing. Prices drop sharply around Black Friday;
+if you are not in a hurry, wait for it.
+
+**3. Usenet indexers.** ~$10–20/year each, some with lifetime tiers. Several are
+invite-only or open registration only periodically, so take a slot when you see
+one. You want more than one: coverage differs, and a single indexer is a single
+point of failure for search.
+
+**4. Torrent trackers.** Public trackers need no account and Prowlarr ships
+definitions for them. Private trackers need signup or an invite and give you
+either an API key, a passkey, or session cookies.
+
+**5. Bazarr.** OpenSubtitles is the main one; the free tier has a daily download
+cap that a bulk backfill will hit immediately, and VIP raises it for ~€20/year.
+Several other providers need no account at all — enable a few, they cost nothing.
+
+**6. Domain.** Only for contract §5.3 remote access, which is not built yet.
+~$10–15/year. You need one you control DNS for, so ACME can issue a certificate.
+That work lands in `palimpsest-system`, not here.
+
 ### 4. Secrets you supply by hand, outside `.env`
 
 Per contract §6, none of these ever land in a committed file. Most are entered
