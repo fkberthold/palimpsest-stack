@@ -1,8 +1,16 @@
 # palimpsest — media stack
 #
-# Built against contract.md. Every UID, GID, path and port below is a contract
-# value; none of them may be changed here. If one looks wrong, fix it in the
-# contract (and in palimpsest-system), not in this file.
+# Built against contract.md v2 (2026-08-04). Every UID, GID, path and port
+# below is a contract value; none of them may be changed here. If one looks
+# wrong, fix it in the contract (and in palimpsest-system), not in this file.
+#
+# Exposure is governed by contract §5.2: Docker publishes via DNAT in
+# PREROUTING and never traverses the INPUT chain, so the host firewall cannot
+# constrain a published port. Binding the publish address is what actually
+# enforces §5.1. Two variables, deliberately not one:
+#
+#   BIND_ADDR_TAILNET  admin UIs — default 127.0.0.1, fails closed
+#   BIND_ADDR_LAN      Jellyseerr only — default 0.0.0.0, firewall-constrained
 #
 # Deployed at /opt/palimpsest-stack/compose.yaml as a plain file — deliberately
 # NOT in the Nix store, so tweaking the stack does not require a nixos-rebuild.
@@ -32,8 +40,15 @@ x-common: &common
 services:
 
   # -------------------------------------------------------------------------
-  # Jellyfin — the only service on host networking (contract §5), because DLNA
+  # Jellyfin — the only service on host networking (contract §5.1), because DLNA
   # and client auto-discovery need broadcast traffic on the LAN.
+  #
+  # Because it is host-networked it is not published by Docker at all, so §5.2's
+  # bind-address rule does not apply to it and cannot protect it — the host
+  # firewall is its only layer. Discovery is UDP 1900 (SSDP) and UDP 7359
+  # (Jellyfin's own broadcast), LAN only; both are opened in palimpsest-system,
+  # not here. Without them auto-discovery silently fails and every client has to
+  # be pointed at an IP by hand.
   #
   # The official jellyfin image is NOT a LinuxServer image: it ignores
   # PUID/PGID/UMASK entirely and runs as whatever `user:` says. Contract §1's
@@ -44,7 +59,7 @@ services:
     image: jellyfin/jellyfin:10.11.11   # stable. NOT 12.0-rc*, which is a
                                         # release candidate as of 2026-08-03.
     container_name: jellyfin
-    network_mode: host                  # contract §5 — port 8096, no mapping
+    network_mode: host                  # contract §5.1 — 8096/tcp, no mapping
     user: "1500:1500"                   # contract §1
     group_add:
       - "303"                           # contract §1 — render GID, pinned by
@@ -74,7 +89,7 @@ services:
     volumes:
       - /opt/palimpsest-stack/prowlarr:/config
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:9696:9696"   # contract §5
+      - "${BIND_ADDR_TAILNET:-127.0.0.1}:9696:9696"   # contract §5.1
 
   sonarr:
     <<: *common
@@ -86,7 +101,7 @@ services:
       - /data:/data                     # contract §2 — one mount, one path.
                                         # This is what makes hardlinking work.
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:8989:8989"   # contract §5
+      - "${BIND_ADDR_TAILNET:-127.0.0.1}:8989:8989"   # contract §5.1
 
   radarr:
     <<: *common
@@ -97,7 +112,7 @@ services:
       - /opt/palimpsest-stack/radarr:/config
       - /data:/data
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:7878:7878"   # contract §5
+      - "${BIND_ADDR_TAILNET:-127.0.0.1}:7878:7878"   # contract §5.1
 
   # Subtitles. Reads media in place and writes sidecar files next to it, so it
   # needs the same /data mapping as Sonarr/Radarr.
@@ -110,7 +125,7 @@ services:
       - /opt/palimpsest-stack/bazarr:/config
       - /data:/data
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:6767:6767"   # contract §5
+      - "${BIND_ADDR_TAILNET:-127.0.0.1}:6767:6767"   # contract §5.1
 
   # Family-facing request UI. Configure LAST — it connects to everything else.
   #
@@ -121,6 +136,13 @@ services:
   # extra_hosts: Jellyfin is on host networking, so it is NOT reachable at
   # `http://jellyfin:8096` from this bridge network. Point Jellyseerr at
   # http://host.docker.internal:8096 instead.
+  #
+  # THE ONLY SERVICE ON BIND_ADDR_LAN (contract §5.2). It is the family-facing
+  # request UI and is LAN-reachable on purpose (§5.1); confining it to the
+  # tailnet would put it out of reach of the people it exists for. Its exposure
+  # is therefore bounded by the host firewall's source rules, not by the bind
+  # address. Every other published service is tailnet-only and binds
+  # BIND_ADDR_TAILNET. Do not collapse the two variables into one.
   jellyseerr:
     <<: *common
     image: ghcr.io/fallenbagel/jellyseerr:2.7.3
@@ -134,7 +156,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:5055:5055"   # contract §5
+      - "${BIND_ADDR_LAN:-0.0.0.0}:5055:5055"   # contract §5.1 — LAN + tailnet
 
   # -------------------------------------------------------------------------
   # Download clients
@@ -144,7 +166,7 @@ services:
   # already TLS and the account is paid and in your name. Nothing to hide from
   # your ISP that a VPN would help with.
   #
-  # SABnzbd listens on 8080 inside the container; contract §5 puts it on 8081
+  # SABnzbd listens on 8080 inside the container; contract §5.1 puts it on 8081
   # on the host, hence the asymmetric mapping. If you change the port inside
   # SABnzbd's own settings, this mapping silently stops working.
   sabnzbd:
@@ -156,7 +178,7 @@ services:
       - /opt/palimpsest-stack/sabnzbd:/config
       - /data:/data
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:8081:8080"   # contract §5
+      - "${BIND_ADDR_TAILNET:-127.0.0.1}:8081:8080"   # contract §5.1
 
   # VPN + killswitch, for the torrent client only. gluetun's firewall drops all
   # traffic that is not going over the tunnel, so if the VPN dies qBittorrent
@@ -189,8 +211,8 @@ services:
       TZ: "America/New_York"
     ports:
       # qBittorrent has no network namespace of its own, so its WebUI is
-      # published here on gluetun. contract §5 — port 8080.
-      - "${BIND_ADDR:-127.0.0.1}:8080:8080"
+      # published here on gluetun. contract §5.1 — 8080/tcp.
+      - "${BIND_ADDR_TAILNET:-127.0.0.1}:8080:8080"
 
   # Torrents, inside gluetun's network namespace. No `ports:` and no
   # `networks:` — it has neither; see gluetun above for both.

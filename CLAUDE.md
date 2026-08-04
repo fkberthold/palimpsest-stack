@@ -1,7 +1,7 @@
 # CLAUDE.md — palimpsest-stack
 
-Guidance for future sessions working in this repo. Read `contract.md` first;
-this file assumes it.
+Guidance for future sessions working in this repo. Read `contract.md` first
+(currently **v2, 2026-08-04** — check §8's changelog); this file assumes it.
 
 ## What this repo is
 
@@ -46,6 +46,7 @@ At runtime, read the live system rather than this copy: `id media`,
 | `/data/transcode` → `/transcode` | Jellyfin |
 | `/dev/dri` | Jellyfin only |
 | Ports 8096/5055/6767/7878/8080/8081/8989/9696 | `ports:` and `network_mode: host` |
+| §5.2 bind-address split | `BIND_ADDR_TAILNET` / `BIND_ADDR_LAN` in `.env` |
 
 These are hardcoded in `compose.yaml` rather than pushed into `.env`
 deliberately: they belong in the tracked file, where a change to one is visible
@@ -71,10 +72,17 @@ Things that look like they could be simplified, and should not be:
   it at `http://gluetun:8080`.
 - **`depends_on: service_healthy` on gluetun.** Keeps the torrent client from
   ever seeing a bare WAN route during startup.
-- **Published ports bind `${BIND_ADDR}`, defaulting to 127.0.0.1.** Docker's
-  iptables rules sit ahead of the host firewall, so publishing on 0.0.0.0 would
-  expose the admin UIs to the LAN regardless of what NixOS's firewall says.
-  Binding the address is the fix that lives inside this layer. It fails closed.
+- **Two bind-address variables, not one** (contract §5.2). Docker publishes by
+  DNAT in `PREROUTING`, which never traverses the `INPUT` chain where the host
+  firewall lives, so publishing on `0.0.0.0` exposes a service to the LAN
+  regardless of what NixOS's firewall says. Binding the publish address is what
+  actually enforces §5.1, and §5.1 has two classes:
+  `BIND_ADDR_TAILNET` (admin UIs, default `127.0.0.1`, fails closed) and
+  `BIND_ADDR_LAN` (Jellyseerr alone, default `0.0.0.0`, bounded by firewall
+  source rules). **Do not collapse them into one variable** — the result is
+  either admin UIs on the LAN or the family locked out of Jellyseerr, and
+  neither fails loudly. Jellyfin is host-networked, so §5.2 does not apply to
+  it and cannot protect it; the firewall is its only layer.
 - **The compose file is a plain file, not in the Nix store** (contract §3). It
   is the thing that changes most often; requiring a `nixos-rebuild` per tweak
   would make iteration miserable.
@@ -95,8 +103,12 @@ Things that look like they could be simplified, and should not be:
   success either way. Only `intel_gpu_top` tells the truth.
 - **SABnzbd's port mapping is asymmetric** (8081 on the host → 8080 inside,
   per contract §5). Changing the port inside SABnzbd's own settings breaks it.
-- **`BIND_ADDR` and boot ordering.** Docker cannot bind a tailnet address
-  before tailscaled has come up.
+- **`BIND_ADDR_TAILNET` and boot ordering.** Docker cannot bind a tailnet
+  address before tailscaled has come up. Contract §3 makes this a start
+  precondition on the systemd unit, in palimpsest-system.
+- **qBittorrent 5.x host-header validation.** Rejects unrecognised `Host`
+  headers with `Unauthorized`, which reads as a wrong password and is not one.
+  Its first-start password is also generated into the log, not a fixed default.
 
 ## Working practice
 

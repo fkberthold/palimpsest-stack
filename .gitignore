@@ -18,7 +18,8 @@
 /jellyseerr/
 /sabnzbd/
 /qbittorrent/
-/gluetun/
+# gluetun is deliberately absent: it has no volume mount and keeps no state on
+# disk. This list means "services with state" — keep it meaning that.
 
 # Editor / OS noise
 *.swp
