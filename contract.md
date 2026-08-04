@@ -1,6 +1,6 @@
 # palimpsest — Interface Contract
 
-**Version 3 — 2026-08-04.** Supersedes v2 entirely. See §8 for what changed and why.
+**Version 4 — 2026-08-04.** Supersedes v3 entirely. See §8 for what changed and why.
 
 **This is the source of truth.** Both the NixOS configuration and the container stack are built against it. Neither agent may change a value here; if an agent believes a value is wrong, it stops and tells me. Amendments are made by me, in this file, and handed to both sessions — that is how v2 came to exist.
 
@@ -79,9 +79,9 @@ Containers mount `/data` as `/data` — identical path inside and out. No per-se
 | Compose file | `/opt/palimpsest-stack/compose.yaml` — a **plain file**, not in the Nix store |
 | Per-app config | `/opt/palimpsest-stack/<appname>/` bind-mounted to the container's `/config` |
 | Boot behavior | systemd unit runs `docker compose up -d`; `down` on stop |
-| Unit ordering | `After=docker.service tailscaled.service` |
+| Unit ordering | `After=docker.service network-online.target`, plus `Wants=network-online.target` |
 | Unit mount deps | `RequiresMountsFor=/data /data/transcode /opt/palimpsest-stack` |
-| Unit start precondition | `tailscale0` must have an IPv4 address before the unit starts — see below |
+| Unit start precondition | a **global-scope IPv4 address** must exist before the unit starts — see below |
 | Unit type | `oneshot` with `RemainAfterExit=yes` |
 | Unit restart policy, while shipped disabled | **None.** Per-container `restart: unless-stopped` handles recovery. |
 | Unit restart policy, once enabled at boot | `Restart=on-failure`, `RestartSec=30`, `StartLimitIntervalSec=600`, `StartLimitBurst=5` |
@@ -93,7 +93,9 @@ The compose file stays outside the Nix store deliberately: it is the thing that 
 
 **The restart policy changes when the unit is enabled at boot, and this is not a contradiction.** The "no restart" rule exists so that systemd does not fight Docker over *already-running* containers — that is what per-container `restart: unless-stopped` is for. It says nothing about a unit that failed to start at all, which is a different failure with no other recovery path: a slow tailnet at boot would otherwise leave the stack down until someone noticed. `Restart=on-failure` with a 30s gap covers that, and `StartLimitBurst=5` over ten minutes means a genuinely broken stack gives up and stays failed instead of looping. While `enableAtBoot` is `false`, no restart policy is set at all — a hand-started unit should fail in front of you.
 
-**Waiting for `tailscale0` is a start precondition, not just ordering.** The stack publishes admin UIs on the tailnet address (§5), and Docker cannot bind an address that does not yet exist. `After=tailscaled.service` is necessary but insufficient — the daemon reaching active does not mean the interface has an address. The unit needs a bounded `ExecStartPre` poll (60s is ample) that **fails** on timeout. Failing loudly produces one clear journal line; succeeding anyway produces a half-started stack and a confusing morning.
+**Waiting for an address is a start precondition, not just ordering.** Every published port binds an explicit address (§5.2), and Docker cannot bind an address that does not yet exist. At boot there is a window where the link is up but DHCP has not returned a lease. `network-online.target` is necessary but insufficient — on NixOS it is weaker than it sounds and does not guarantee a lease. The unit needs a bounded `ExecStartPre` poll (60s is ample) that **fails** on timeout.
+
+The poll must match on **global scope**, which excludes loopback and link-local `169.254.0.0/16`. Link-local is precisely what a *failed* DHCP negotiation leaves behind, and treating it as success would defeat the check. Failing loudly produces one clear journal line; succeeding anyway produces a half-started stack and a confusing morning.
 
 ## 4. Hardware passthrough
 
@@ -113,25 +115,24 @@ The **Enforced by** column is not commentary. It is the difference between a rul
 
 | Port | Service | Reachable from | Enforced by |
 |---|---|---|---|
-| 22/tcp | SSH | LAN + tailscale0 | Host firewall (sshd binds on the host) |
-| 8096/tcp | Jellyfin | LAN + tailscale0 | Host firewall (host networking) |
+| 22/tcp | SSH | LAN only | Host firewall (sshd binds on the host) |
+| 8096/tcp | Jellyfin | LAN only, **plus the internet later via §5.3** | Host firewall (host networking) |
 | 1900/udp, 7359/udp | Jellyfin client auto-discovery | LAN only | Host firewall (host networking) |
-| 5055/tcp | Jellyseerr | LAN + tailscale0 | **Bind address** (Docker-published) |
-| 6767/tcp | Bazarr | tailscale0 only | **Bind address** (Docker-published) |
-| 7878/tcp | Radarr | tailscale0 only | **Bind address** (Docker-published) |
-| 8080/tcp | qBittorrent WebUI (published by gluetun) | tailscale0 only | **Bind address** (Docker-published) |
-| 8081/tcp | SABnzbd | tailscale0 only | **Bind address** (Docker-published) |
-| 8989/tcp | Sonarr | tailscale0 only | **Bind address** (Docker-published) |
-| 9696/tcp | Prowlarr | tailscale0 only | **Bind address** (Docker-published) |
-| 41641/udp | Tailscale transport (not an application port) | all interfaces | — (disclosed, not restricted) |
+| 5055/tcp | Jellyseerr | LAN only | **Bind address** (Docker-published) |
+| 6767/tcp | Bazarr | LAN only | **Bind address** (Docker-published) |
+| 7878/tcp | Radarr | LAN only | **Bind address** (Docker-published) |
+| 8080/tcp | qBittorrent WebUI (published by gluetun) | LAN only | **Bind address** (Docker-published) |
+| 8081/tcp | SABnzbd | LAN only | **Bind address** (Docker-published) |
+| 8989/tcp | Sonarr | LAN only | **Bind address** (Docker-published) |
+| 9696/tcp | Prowlarr | LAN only | **Bind address** (Docker-published) |
 
-Firewall default-deny inbound. LAN means RFC1918 only. **Nothing is port-forwarded from the router, ever.**
+Firewall default-deny inbound. LAN means RFC1918 only.
 
-**Jellyseerr is LAN-reachable on purpose.** It is the family-facing request UI; confining it to the tailnet would put it out of reach of the people it exists for.
+**There is no VPN in this design, and that is deliberate.** This server exists so that a family member outside the house can watch it on a **Roku**, which has no Tailscale or WireGuard client. A VPN-based access model cannot serve the requirement, so it was removed rather than kept as decoration. Remote access is §5.3.
+
+**Everything is LAN-reachable, including the admin UIs.** With no tailnet there is nowhere else to put them. They are bounded by their bind address (§5.2), not by the firewall, and they are not exposed beyond the LAN.
 
 **Discovery is UDP and does not run on 8096.** Host networking lets Jellyfin *send* discovery traffic; inbound probes from LAN clients still have to be allowed, or auto-discovery silently does not work and every client has to be pointed at an IP by hand.
-
-**41641/udp is listed for disclosure, not because an application needs it.** It is Tailscale's own transport, opened by `services.tailscale.openFirewall`. Without it, peer traffic relays through DERP — slow for video. Nothing is forwarded at the router, so in practice it is only reachable from the LAN.
 
 ### 5.2 Docker bypasses the host firewall — bind addresses are the enforcement
 
@@ -141,28 +142,40 @@ Docker publishes ports by DNAT in `PREROUTING`. The destination address is rewri
 
 Two consequences, and the second one is the one that catches people:
 
-1. For anything Docker publishes, **the bind address is the only enforcement.** A socket bound to the tailnet address is not listening on the LAN, firewall or no firewall.
+1. For anything Docker publishes, **the bind address is the only enforcement.** A socket bound to this machine's LAN address is not listening on anything else, firewall or no firewall — and one bound to `0.0.0.0` is listening on everything, firewall or no firewall.
 2. **`0.0.0.0` is never an acceptable bind address in this stack** — not even for a service that is *supposed* to be LAN-reachable. Publishing on `0.0.0.0` and expecting a host-firewall source rule to narrow it is the exact mistake this section exists to prevent: the rule passes review, passes a grep of the ruleset, and constrains nothing.
 
-Therefore **every published port binds an explicit address**, and a service reachable from two places is published twice:
+Therefore **every published port binds an explicit address**:
 
 | Class | Bind | Services |
 |---|---|---|
-| Tailnet-only | `${BIND_ADDR_TAILNET}:<port>:<port>` | 6767, 7878, 8080, 8081, 8989, 9696 |
-| LAN + tailnet | two mappings: `${BIND_ADDR_LAN}` **and** `${BIND_ADDR_TAILNET}` | 5055 |
+| Docker-published | `${BIND_ADDR_LAN}:<port>:<port>` | 5055, 6767, 7878, 8080, 8081, 8989, 9696 |
 | Host-networked | not published by Docker; host firewall governs | 8096, 1900, 7359 |
 
-`BIND_ADDR_TAILNET` **defaults to `127.0.0.1`** so an unconfigured stack fails closed, reachable only over an SSH tunnel. This is also why the stack unit must wait for `tailscale0` (§3).
+`BIND_ADDR_LAN` **has no default.** It must be set to this machine's DHCP-reserved LAN address. If it is unset, the substitution yields an invalid port mapping and `docker compose` refuses to start — which is the correct failure: loud, immediate, at bring-up, rather than a service quietly listening on every interface. This is also why the stack unit must wait for an address (§3).
 
-`BIND_ADDR_LAN` **has no default.** It must be set to this machine's DHCP-reserved LAN address. If it is unset, Docker attempts two bindings on `127.0.0.1:5055` and refuses the duplicate — which is the correct failure: loud, immediate, at bring-up, rather than a service quietly listening somewhere nobody intended.
+**Host-firewall rules exist only for host-networked services.** `INPUT` rules for 22, 8096, 1900 and 7359 are real and load-bearing. There is deliberately **no** `INPUT` rule for any Docker-published port: an inert rule that reads as protection is worse than no rule. If a service ever moves from Docker publishing to host networking, it needs a firewall rule added at that time. That is the only circumstance in which those rules should grow.
 
-**Host-firewall rules exist only for host-networked services.** `INPUT` rules for 22, 8096, 1900 and 7359 are real and load-bearing. There is deliberately **no** `INPUT` rule for 5055 or any other Docker-published port: an inert rule that reads as protection is worse than no rule. If a service ever moves from Docker to host networking, it needs a firewall rule added at that time.
+### 5.3 Internet exposure for the Roku — planned, not yet built
+
+v1 through v3 said "nothing is port-forwarded from the router, ever." That was written before the actual requirement was on the table: an elderly family member watching via a Roku outside the house. VPN is not available to that client (§5.1), so a forwarded port is the only mechanism left. The risk is understood and accepted. This section constrains *how*, not *whether*.
+
+| Rule | Value |
+|---|---|
+| Port forwarded at the router | **443/tcp only** |
+| Never forwarded | **22**, **8096**, and every Docker-published port |
+| TLS | Terminated on `palimpsest` by a host-side reverse proxy (nginx + ACME), declarative in `palimpsest-system` |
+| Jellyfin's own port | Stays **8096, plaintext, LAN-only**. The proxy reaches it locally; the internet never does. |
+| Stack's obligation | Jellyfin remains host-networked and **must not** be Docker-published |
+
+**8096 must never be the forwarded port.** It is plaintext HTTP; forwarding it puts the viewer's password and every session token on the open internet in the clear. Jellyfin also has no rate limiting and no MFA, so it is not built to be the process answering the internet directly.
+
+**The host firewall fails closed here, deliberately.** A forwarded packet arrives with its original public source address, so it matches no RFC1918 rule and is dropped. Switching on a forward at the router therefore cannot expose this machine by itself — internet exposure additionally requires a deliberate edit to a version-controlled file. That property is to be preserved.
 
 ## 6. Secrets
 
 No secret appears in either the Nix config or the compose file. Placeholders only, documented in each half's `NOTES.md`:
 
-- Tailscale auth key — authenticated by hand, `tailscale up --ssh`
 - WireGuard/VPN credentials for the download client — `.env`, gitignored
 - Usenet provider and indexer credentials — entered in each app's web UI
 - Any API keys the automation tools generate for each other — likewise
@@ -213,7 +226,7 @@ Same inode, `links=2`. If this fails, stop — every import silently becomes a f
 ss -ltnp | awk '$4 !~ /^\[/ {print $4}' | sort -u
 ```
 
-No listener on a Docker-published port may show `0.0.0.0:` or `*:`. 5055 must appear **twice**, once on the LAN address and once on the tailnet address. The six tailnet-only ports must appear only on the tailnet address.
+No listener on a Docker-published port may show `0.0.0.0:` or `*:`. Every one of the seven must appear on this machine's LAN address and nowhere else. A listener on `0.0.0.0` is the v2 defect returning.
 
 **Exposure matches §5.1.** From a LAN host that is *not* on the tailnet:
 
@@ -221,7 +234,7 @@ No listener on a Docker-published port may show `0.0.0.0:` or `*:`. 5055 must ap
 nmap -Pn -p 22,5055,6767,7878,8080,8081,8096,8989,9696 <palimpsest-lan-ip>
 ```
 
-Open: 22, 5055, 8096. Everything else filtered or closed. Note this scan passes whether or not §5.2 is implemented correctly — it is necessary, not sufficient. The `ss` check above is the one with teeth.
+All of them open, since everything is LAN-reachable by design. Note this scan says nothing about whether §5.2 is implemented correctly — a service bound to `0.0.0.0` and one bound to the LAN address look identical from the LAN. The `ss` check above is the one with teeth. To test §5.3 later, scan from **outside** the network: only 443 may answer.
 
 **The VPN tunnel actually carries torrent traffic:**
 
@@ -231,6 +244,17 @@ curl -s https://ipinfo.io/ip     # must differ
 ```
 
 ## 8. Changelog
+
+### v4 — 2026-08-04
+
+Tailscale is removed. The trigger was stating the actual requirement out loud: this server exists for a family member on a **Roku**, a device with no Tailscale or WireGuard client. Every version through v3 had built a remote-access design that the one user who needs remote access could not use. Nothing was wrong with the reasoning inside v3 — the premise was never checked against the client.
+
+1. **§5.1 — no VPN; everything is LAN-reachable.** The seven Docker-published services move from `tailscale0`-only to LAN-only, still bounded by bind address rather than firewall. 41641/udp is gone with the daemon that needed it.
+2. **§5.2 — `BIND_ADDR_TAILNET` deleted.** One bind address, `BIND_ADDR_LAN`, still with no default so an unset value fails at bring-up. Services are published once, not twice.
+3. **§5.3 — new.** The port-forward ban is replaced with a constrained policy: 443 only, TLS terminated host-side, 8096 never forwarded, Jellyfin never Docker-published. The system layer's RFC1918 source matching means a router forward alone cannot expose the machine, and that property is now contractual.
+4. **§3 — the start precondition is generalised, not deleted.** The bind race moved from the tailnet address to the LAN address; it did not go away. Now `After=docker.service network-online.target` plus a bounded poll for a global-scope IPv4, which correctly excludes the link-local address a failed DHCP leaves behind.
+5. **§6 — the Tailscale auth key is no longer a secret to manage.**
+6. **§7.2 — the `ss` and `nmap` checks updated** for a single LAN bind address, with a note that `nmap` from the LAN cannot distinguish a correct bind from `0.0.0.0`.
 
 ### v3 — 2026-08-04
 

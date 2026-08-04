@@ -1,7 +1,7 @@
 # Prompt 3 — Bring-up and verification
 
 Run this **on palimpsest**, after the system layer is installed and contract
-§7.1 passes. Attach `contract.md` (v3).
+§7.1 passes. Attach `contract.md` (v4).
 
 Prompt 2 authored the stack; nothing in it has been executed. This session is
 the empirical half — you are starting containers, reading logs, and turning
@@ -11,7 +11,7 @@ the empirical half — you are starting containers, reading logs, and turning
 
 I am bringing up the container stack on a headless NixOS media server. The
 compose file and documentation already exist in `palimpsest-stack` and were
-written against `contract.md` v3, which I have attached. **Every value in the
+written against `contract.md` v4, which I have attached. **Every value in the
 contract is fixed.** If one appears wrong, stop and tell me; do not work around
 it. Amendments happen in the contract, by me.
 
@@ -59,7 +59,8 @@ delay profiles.
 **Contract §7.2, all five checks, with output:**
 
 1. `docker compose config` parses. Note this now also proves `.env` is
-   complete: `BIND_ADDR_LAN` has no default and compose aborts without it.
+   complete: `BIND_ADDR_LAN` has no default and compose aborts without it. It
+   is the bind address for all seven published services.
 2. **Hardlinking from inside a container** — `sonarr`, `radarr` and
    `qbittorrent` each separately. Same inode, `links=2`. A broken path mapping
    does not error; it silently turns every import into a full copy and you find
@@ -70,18 +71,16 @@ delay profiles.
    ss -ltnp | awk '$4 !~ /^\[/ {print $4}' | sort -u
    ```
 
-   No Docker-published port may show `0.0.0.0:` or `*:`. **5055 must appear
-   twice**, on two distinct addresses (LAN and tailnet); the six tailnet-only
-   ports only on the tailnet address. If 5055 appears once, check whether
-   `BIND_ADDR_LAN` equals `BIND_ADDR_TAILNET` — compose silently deduplicates
-   identical `host_ip:port` pairs rather than complaining.
-4. **Exposure scan from a LAN host that is not on the tailnet.** Only 22, 5055
-   and 8096 may answer. Necessary but *not* sufficient, and know why: 5055 is
-   supposed to answer from the LAN, so this scan passes identically whether
-   Jellyseerr is correctly bound or wrongly bound to `0.0.0.0`. That is how the
-   v2 defect survived. Check 3 is what distinguishes them. If an admin UI
-   responds, `BIND_ADDR_TAILNET` is wrong — go to contract §5.2, not to the
-   firewall, which Docker's DNAT means is never consulted for published ports.
+   All seven Docker-published ports (5055, 6767, 7878, 8080, 8081, 8989, 9696)
+   must appear on this machine's LAN address and **nowhere else**. None may show
+   `0.0.0.0:` or `*:` — a listener on `0.0.0.0` is the v2 defect returning.
+   Jellyfin's 8096 is host-networked and is not part of this check.
+4. **Exposure scan from another LAN host.** Everything should answer; everything
+   is LAN-reachable by design under v4. Know what this does *not* prove: a
+   service bound to `0.0.0.0` and one bound to the LAN address look identical
+   from the LAN, which is exactly how the v2 defect survived review. Check 3 is
+   what distinguishes them. Run this anyway — it catches a service that failed
+   to start — but do not read a clean scan as evidence about bind addresses.
 5. **VPN egress** — gluetun's public IP must differ from the host's.
 
 **Plus the hardware transcode proof**, which is not in §7.2 but is the other
@@ -93,7 +92,7 @@ low-power H.264/HEVC encoder, and expect AV1 decode but not AV1 encode.
 
 ## Deliverables
 
-1. Actual command output for all four §7.2 checks and the transcode proof —
+1. Actual command output for all five §7.2 checks and the transcode proof —
    pasted, not summarised, and not a claim that you ran them.
 2. `NOTES.md` updated: replace the "authored, not yet deployed" status block
    with what was actually verified and when. Correct anything bring-up proved

@@ -22,28 +22,40 @@ settings below enable AV1 decoding but nothing expects AV1 output.
 
 | Service | Image | Pinned | Port | Reachable from (§5.1) |
 |---|---|---|---|---|
-| Jellyfin | `jellyfin/jellyfin` | `10.11.11` | 8096/tcp, host networking | LAN + tailnet |
+| Jellyfin | `jellyfin/jellyfin` | `10.11.11` | 8096/tcp, host networking | LAN only |
 | | | | 1900/udp, 7359/udp discovery | LAN only |
-| Jellyseerr | `ghcr.io/fallenbagel/jellyseerr` | `2.7.3` | 5055 | **LAN + tailnet** |
-| Prowlarr | `lscr.io/linuxserver/prowlarr` | `2.5.2` | 9696 | tailnet only |
-| Sonarr | `lscr.io/linuxserver/sonarr` | `4.0.19` | 8989 | tailnet only |
-| Radarr | `lscr.io/linuxserver/radarr` | `6.3.0` | 7878 | tailnet only |
-| Bazarr | `lscr.io/linuxserver/bazarr` | `1.6.0` | 6767 | tailnet only |
-| SABnzbd | `lscr.io/linuxserver/sabnzbd` | `5.0.4` | 8081 → 8080 in-container | tailnet only |
-| qBittorrent | `lscr.io/linuxserver/qbittorrent` | `5.2.3` | via gluetun | tailnet only |
-| gluetun | `qmcgaw/gluetun` | `v3.41.3` | publishes 8080 for qBittorrent | tailnet only |
+| Jellyseerr | `ghcr.io/fallenbagel/jellyseerr` | `2.7.3` | 5055 | LAN only |
+| Prowlarr | `lscr.io/linuxserver/prowlarr` | `2.5.2` | 9696 | LAN only |
+| Sonarr | `lscr.io/linuxserver/sonarr` | `4.0.19` | 8989 | LAN only |
+| Radarr | `lscr.io/linuxserver/radarr` | `6.3.0` | 7878 | LAN only |
+| Bazarr | `lscr.io/linuxserver/bazarr` | `1.6.0` | 6767 | LAN only |
+| SABnzbd | `lscr.io/linuxserver/sabnzbd` | `5.0.4` | 8081 → 8080 in-container | LAN only |
+| qBittorrent | `lscr.io/linuxserver/qbittorrent` | `5.2.3` | via gluetun | LAN only |
+| gluetun | `qmcgaw/gluetun` | `v3.41.3` | publishes 8080 for qBittorrent | LAN only |
 
-Every "tailnet only" row binds `BIND_ADDR_TAILNET`. **Jellyseerr is published
-twice** — once on `BIND_ADDR_LAN`, once on `BIND_ADDR_TAILNET` — because it is
-reachable from two places and, per contract §5.2, **no published port ever
-binds `0.0.0.0`**. Jellyfin is host-networked and not published by Docker at
-all, so the host firewall governs it and is its only protection.
+**There is no VPN in this design.** Contract v4 removed Tailscale: this server
+exists so a family member outside the house can watch on a **Roku**, which has
+no Tailscale or WireGuard client, so a tailnet-based access model served nobody.
+Everything is LAN-only, admin UIs included — with no tailnet there is nowhere
+else to put them.
 
-The reason for the whole arrangement, in one line: Docker DNATs published ports
-in `PREROUTING`, so they never reach `INPUT` and the host firewall is never
+All seven Docker-published services bind `BIND_ADDR_LAN`, once each. Jellyfin
+is host-networked and not published by Docker at all, so the host firewall
+governs it and is its only protection.
+
+The reason for the arrangement, in one line: Docker DNATs published ports in
+`PREROUTING`, so they never reach `INPUT` and the host firewall is never
 consulted for them. For anything Docker publishes, the bind address *is* the
-enforcement. There is deliberately no firewall rule for 5055 — an inert rule
-that reads as protection is worse than no rule. See `.env.example`.
+enforcement — which is why none of them may bind `0.0.0.0`, and why there is
+deliberately no firewall rule for any of them. An inert rule that reads as
+protection is worse than no rule. See `.env.example`.
+
+**Remote access is contract §5.3 and is not built here.** When it arrives it is
+443/tcp forwarded to a host-side TLS reverse proxy in `palimpsest-system`. This
+repo's obligation under §5.3 is a negative one: Jellyfin stays host-networked
+and must never be given a `ports:` block. 8096 is plaintext, unrate-limited and
+MFA-less; Docker-publishing it would bypass the host firewall and put it one
+router forward from the open internet in the clear.
 
 ### Why these tags
 
@@ -111,16 +123,13 @@ cp .env.example .env && chmod 600 .env && $EDITOR .env
 
 Two things need real values:
 
-- **`BIND_ADDR_TAILNET`** — this machine's tailnet address (`tailscale ip -4`).
-  The default of `127.0.0.1` fails closed and is safe for bring-up over an SSH
-  tunnel.
-- **`BIND_ADDR_LAN`** — this machine's DHCP-reserved LAN address. It has **no
-  default and must be set**; with it blank, compose aborts before starting
-  anything:
+- **`BIND_ADDR_LAN`** — this machine's DHCP-reserved LAN address, and the bind
+  address for all seven published services. It has **no default and must be
+  set**; with it blank, compose aborts before starting anything:
 
   ```
-  required variable BIND_ADDR_LAN is missing a value: must be set to this
-  machine's DHCP-reserved LAN address — contract §5.2, no default
+  required variable BIND_ADDR_LAN is missing a value: no default — set to
+  this machine's LAN address in .env, contract §5.2
   ```
 
   That is designed, not broken. It also means contract §7.2's
@@ -152,7 +161,7 @@ in a web UI after the service is up:
 
 | Secret | Where it goes |
 |---|---|
-| Tailscale auth key | Host, not this stack — `tailscale up`, done by hand |
+| TLS certificate for §5.3, when built | Host, not this stack — ACME in `palimpsest-system` |
 | VPN WireGuard key | `.env`, gluetun |
 | Usenet provider (server, user, pass) | SABnzbd UI → Config → Servers |
 | Indexer credentials / API keys | Prowlarr UI → Indexers |
@@ -218,12 +227,12 @@ do, which makes "it worked yesterday" a confusing morning.
 
 **"Unauthorized" even with the right credentials.** qBittorrent 5.x validates
 the HTTP `Host` header and rejects anything it does not recognise, so reaching
-the WebUI at `http://100.x.y.z:8080` fails with `Unauthorized` before your
+the WebUI at `http://192.168.x.y:8080` fails with `Unauthorized` before your
 credentials are even considered — the failure looks like a bad password and is
 not one. Fix it once you are in, via an SSH tunnel to `127.0.0.1:8080` if
 needed. Options → Web UI, either:
 
-- add the tailnet address (and any hostname you use) to **"Server domains"**, or
+- add the LAN address (and any hostname you use) to **"Server domains"**, or
 - untick **"Validate HTTP Host header"**.
 
 Prefer the first: it keeps the DNS-rebinding protection the check exists to
@@ -351,42 +360,38 @@ and it is the only one in §7.2 that cannot pass while §5.2 is violated:
 ss -ltnp | awk '$4 !~ /^\[/ {print $4}' | sort -u
 ```
 
-Two things must hold:
+One thing must hold, for all seven published ports:
 
-- **No Docker-published port shows `0.0.0.0:` or `*:`.** Any that does is
-  listening on every interface, and no firewall rule will constrain it.
-- **5055 appears twice**, on two distinct addresses — the LAN address and the
-  tailnet address. Once means one of Jellyseerr's two bindings did not take;
-  check that `BIND_ADDR_LAN` is not accidentally equal to `BIND_ADDR_TAILNET`,
-  since compose silently deduplicates identical `host_ip:port` pairs rather
-  than complaining.
+- **Every one appears on this machine's LAN address and nowhere else.** None may
+  show `0.0.0.0:` or `*:`. A listener on `0.0.0.0` is the v2 defect returning —
+  it is listening on every interface and no firewall rule will constrain it.
 
-The six tailnet-only ports (6767, 7878, 8080, 8081, 8989, 9696) must appear
-only on the tailnet address.
+The seven are 5055, 6767, 7878, 8080, 8081, 8989 and 9696. Jellyfin's 8096 is
+host-networked, so it legitimately binds wherever Jellyfin binds; it is not in
+this check.
 
 The `awk` filter drops IPv6 listeners so the output stays readable; if you want
 to see those too, drop it.
 
 #### 3. Exposure scan
 
-Run **from a LAN host that is not on the tailnet**. From palimpsest itself, or
-from a tailnet peer, it proves nothing — the point is what an ordinary machine
-on the home network can reach.
+Run **from another host on the LAN**.
 
 ```bash
 nmap -Pn -p 22,5055,6767,7878,8080,8081,8096,8989,9696 <palimpsest-lan-ip>
 ```
 
-Exactly three may answer: **22, 5055, 8096**. Everything else filtered or closed.
+All of them should answer — everything is LAN-reachable by design under v4.
 
-**This check is necessary but not sufficient, and it is important to know why.**
-It passes whether or not §5.2 is implemented correctly: 5055 is *supposed* to
-answer from the LAN, so a Jellyseerr wrongly bound to `0.0.0.0` produces exactly
-the same scan result as one correctly bound to the LAN address. That is how the
-v2 defect survived review. Check 2 above is what distinguishes them; run both.
+**This check proves almost nothing about §5.2, and it is important to know why.**
+A service bound to `0.0.0.0` and one bound correctly to the LAN address look
+*identical* from the LAN. That is exactly how the v2 defect survived review.
+Check 2 above is the one that distinguishes them. Run this anyway — it catches
+a service that failed to start, or a port mapping that never took — but do not
+read a clean scan as evidence that the bind addresses are right.
 
-If an admin UI answers, `BIND_ADDR_TAILNET` is wrong. Do not go looking at the
-firewall — for Docker-published ports it is never consulted (contract §5.2).
+Once contract §5.3 is built, the meaningful version of this scan is from
+**outside** the network, where only 443 may answer.
 
 #### 4. VPN egress
 
@@ -413,14 +418,14 @@ Should be `media media 775`. If new files land as `root root` or `0644`, the
 | **Any container restart-looping** | `docker compose logs --tail=50 <svc>`. Most often the `/config` directory is root-owned — see "Pre-create" above. |
 | **Jellyfin: no hardware transcode** | `docker compose exec jellyfin ls -l /dev/dri`, then `id` inside it — group 303 must be present. Then `vainfo` on the host. |
 | **Jellyfin unreachable but running** | It is on host networking; there is no port mapping to be wrong. Check the NixOS firewall, not this stack. |
-| **Admin UI unreachable over tailnet** | `BIND_ADDR_TAILNET` in `.env`. If it is `127.0.0.1` (the default), that is working as designed — set it to the tailnet IP and `docker compose up -d`. |
+| **Admin UI unreachable from the LAN** | `BIND_ADDR_LAN` in `.env` — it must be this machine's actual LAN address. `ss -ltnp` to see what took. |
 | **Admin UI reachable from the LAN** | Same variable, opposite failure, and the serious one. `ss -ltnp` to see what is actually bound; anything on `0.0.0.0` is the bug. Do not look at the firewall — Docker's DNAT means it is never consulted (§5.2). |
-| **Jellyseerr unreachable from the LAN** | `ss -ltnp \| grep 5055` — it must appear on two addresses. If only one, `BIND_ADDR_LAN` is unset, wrong, or equal to `BIND_ADDR_TAILNET` (compose silently dedupes identical pairs). Not a firewall problem: there is no firewall rule for 5055 by design. |
+| **Jellyseerr unreachable from the LAN** | Same as any other published service now — check `BIND_ADDR_LAN`. Not a firewall problem: there is deliberately no firewall rule for any Docker-published port. |
 | **`required variable BIND_ADDR_LAN is missing a value`** | Working as designed — it has no default. Set it to the DHCP-reserved LAN address in `.env`. |
-| **`docker compose up` fails: "cannot assign requested address"** | `BIND_ADDR_TAILNET` names an address that does not exist yet — tailscaled has not come up. Contract §3 makes this a start precondition on the unit. |
+| **`docker compose up` fails: "cannot assign requested address"** | `BIND_ADDR_LAN` names an address the host does not have yet — at boot, DHCP has not returned a lease. Contract §3 makes waiting for a global-scope IPv4 a start precondition on the unit. |
 | **Jellyfin clients don't auto-discover** | UDP 1900/7359 inbound, LAN only. Opened in palimpsest-system, not here. TCP 8096 working tells you nothing about this. |
 | **qBittorrent unreachable** | Check gluetun first: `docker compose ps gluetun` (must be `healthy`), then its logs. qBittorrent cannot start until gluetun is healthy, by design. |
-| **qBittorrent says "Unauthorized" with correct credentials** | Host-header validation, not authentication. Add the tailnet address to Server domains, or untick "Validate HTTP Host header". See the bring-up section. |
+| **qBittorrent says "Unauthorized" with correct credentials** | Host-header validation, not authentication. Add the LAN address to Server domains, or untick "Validate HTTP Host header". See the bring-up section. |
 | **qBittorrent password rejected after a restart** | The generated temporary password is regenerated every start until you set a permanent one. `docker compose logs qbittorrent \| grep -i password`. |
 | **qBittorrent reachable but downloads nothing** | Tunnel is up but the killswitch is eating traffic. Check `FIREWALL_OUTBOUND_SUBNETS` matches `DOCKER_SUBNET`. |
 | **Sonarr/Radarr can't reach qBittorrent** | The host is `gluetun`, not `qbittorrent`. |
@@ -436,10 +441,12 @@ Outside this repo's boundary (contract §0). Both items this repo raised against
 v1 were resolved in contract v2 and are now the system layer's obligations, not
 open questions:
 
-1. **The stack unit waits for `tailscale0` to have an address** — contract §3,
-   a bounded `ExecStartPre` poll that fails on timeout, not merely
-   `After=tailscaled.service`. Required because `BIND_ADDR_TAILNET` names an
-   address that does not exist at early boot.
+1. **The stack unit waits for a global-scope IPv4 address** — contract §3, a
+   bounded `ExecStartPre` poll that fails on timeout. Required because
+   `BIND_ADDR_LAN` names an address that does not exist until DHCP returns a
+   lease. The poll must match on *global* scope specifically: link-local
+   `169.254.0.0/16` is what a failed DHCP negotiation leaves behind, and
+   accepting it would defeat the check.
 2. **`/data/transcode` is in `RequiresMountsFor`** — contract §3. Without it a
    failed tmpfs mount leaves the underlying directory in place with correct
    ownership, and Jellyfin transcodes to the NVMe instead of RAM, silently.
@@ -448,10 +455,15 @@ open questions:
 
 Still the system layer's, and not verifiable from here:
 
-- Firewall source rules for 5055 and 8096 (RFC1918 only) and the UDP discovery
-  ports 1900/7359. §5.2's bind-address split is the first layer; these are the
-  second, and they are Jellyfin's *only* layer.
+- Firewall source rules for 22, 8096 and the UDP discovery ports 1900/7359
+  (RFC1918 only). These are Jellyfin's *only* protection — it is host-networked,
+  so §5.2's bind-address rule does not reach it. There is deliberately no rule
+  for any Docker-published port.
 - `/dev/dri/renderD128` group-owned by 303, and the iHD driver installed.
+- **Contract §5.3, when it is built**: the 443/tcp forward, the TLS reverse
+  proxy, and ACME. None of it lives here. This repo's only §5.3 obligation is
+  to keep Jellyfin host-networked and unpublished — see the `jellyfin` block in
+  `compose.yaml`.
 
 ## Backups
 

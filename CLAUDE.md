@@ -1,7 +1,7 @@
 # CLAUDE.md — palimpsest-stack
 
 Guidance for future sessions working in this repo. Read `contract.md` first
-(currently **v3, 2026-08-04** — check §8's changelog); this file assumes it.
+(currently **v4, 2026-08-04** — check §8's changelog); this file assumes it.
 
 ## What this repo is
 
@@ -46,7 +46,8 @@ At runtime, read the live system rather than this copy: `id media`,
 | `/data/transcode` → `/transcode` | Jellyfin |
 | `/dev/dri` | Jellyfin only |
 | Ports 8096/5055/6767/7878/8080/8081/8989/9696 | `ports:` and `network_mode: host` |
-| §5.2 bind-address enforcement | `BIND_ADDR_TAILNET` / `BIND_ADDR_LAN` in `.env`; Jellyseerr published twice |
+| §5.2 bind-address enforcement | `BIND_ADDR_LAN` in `.env`, all seven published ports |
+| §5.3 Jellyfin never Docker-published | absence of a `ports:` block on `jellyfin` |
 
 These are hardcoded in `compose.yaml` rather than pushed into `.env`
 deliberately: they belong in the tracked file, where a change to one is visible
@@ -72,22 +73,26 @@ Things that look like they could be simplified, and should not be:
   it at `http://gluetun:8080`.
 - **`depends_on: service_healthy` on gluetun.** Keeps the torrent client from
   ever seeing a bare WAN route during startup.
-- **No published port binds `0.0.0.0`, and Jellyseerr is published twice**
-  (contract §5.2). Docker publishes by DNAT in `PREROUTING`; the destination is
-  rewritten before the packet reaches `INPUT`, where the host firewall lives. A
-  firewall rule naming a Docker-published port is never consulted — it passes
-  review and constrains nothing. So for published ports the bind address is the
-  only enforcement, and a service reachable from two places gets two explicit
-  mappings rather than one broad one. `BIND_ADDR_TAILNET` defaults to
-  `127.0.0.1` (fails closed); `BIND_ADDR_LAN` has **no default** and uses
-  compose's `${VAR:?message}` form so an unset value aborts bring-up.
-  Jellyfin is host-networked, so §5.2 does not apply to it and cannot protect
-  it; the firewall is its only layer, and that rule is real.
+- **No published port binds `0.0.0.0`** (contract §5.2). Docker publishes by
+  DNAT in `PREROUTING`; the destination is rewritten before the packet reaches
+  `INPUT`, where the host firewall lives. A firewall rule naming a
+  Docker-published port is never consulted — it passes review and constrains
+  nothing. For published ports the bind address is the only enforcement, so all
+  seven bind `BIND_ADDR_LAN` explicitly. Jellyfin is host-networked, so §5.2
+  does not apply to it and cannot protect it; the firewall is its only layer,
+  and that rule is real.
 - **`${BIND_ADDR_LAN:?...}` is load-bearing, not decoration.** Do not replace it
-  with a default, and do not assume two identical mappings would collide
-  instead: compose **silently deduplicates** identical `host_ip:port` pairs and
-  exits 0. Verified. That path would leave Jellyseerr bound to loopback only,
-  unreachable, with no error anywhere.
+  with a default and do not simplify it to a bare `${BIND_ADDR_LAN}`. Verified:
+  bare-and-unset does **not** fail — compose warns, exits 0, and renders the
+  mapping with no host address at all, which binds every interface. That is the
+  v2 defect, reached silently. `:?` is the only construct that aborts.
+- **No VPN, and Jellyfin is never Docker-published** (contract §5.1, §5.3). v4
+  removed Tailscale because the family member this server exists for watches on
+  a Roku, which has no VPN client. Remote access will be 443/tcp to a host-side
+  TLS proxy in `palimpsest-system`. This repo's whole §5.3 obligation is the
+  negative one: no `ports:` block on `jellyfin`, ever. 8096 is plaintext, has
+  no rate limiting and no MFA, and publishing it would bypass the host firewall
+  and sit one router forward from the internet in the clear.
 - **The compose file is a plain file, not in the Nix store** (contract §3). It
   is the thing that changes most often; requiring a `nixos-rebuild` per tweak
   would make iteration miserable.
@@ -108,9 +113,11 @@ Things that look like they could be simplified, and should not be:
   success either way. Only `intel_gpu_top` tells the truth.
 - **SABnzbd's port mapping is asymmetric** (8081 on the host → 8080 inside,
   per contract §5). Changing the port inside SABnzbd's own settings breaks it.
-- **`BIND_ADDR_TAILNET` and boot ordering.** Docker cannot bind a tailnet
-  address before tailscaled has come up. Contract §3 makes this a start
-  precondition on the systemd unit, in palimpsest-system.
+- **`BIND_ADDR_LAN` and boot ordering.** Docker cannot bind an address the host
+  does not have yet; at boot, DHCP may not have returned a lease. Contract §3
+  makes waiting for a *global-scope* IPv4 a start precondition on the systemd
+  unit, in palimpsest-system — global scope specifically, because link-local is
+  what a failed DHCP leaves behind.
 - **qBittorrent 5.x host-header validation.** Rejects unrecognised `Host`
   headers with `Unauthorized`, which reads as a wrong password and is not one.
   Its first-start password is also generated into the log, not a fixed default.
