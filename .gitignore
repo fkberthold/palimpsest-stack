@@ -1,0 +1,25 @@
+# Secrets — contract §6. Nothing with a credential in it is ever committed.
+.env
+*.key
+*.pem
+
+# Per-app runtime state — contract §0.
+#
+# These directories live inside this checkout but are NOT source. They hold
+# SQLite databases, generated API keys, cross-service tokens, session state and
+# caches. They are listed explicitly rather than by a wildcard so that adding a
+# service is a deliberate act: a new service's config directory will show up as
+# untracked and make you decide, instead of being silently swallowed.
+/jellyfin/
+/prowlarr/
+/sonarr/
+/radarr/
+/bazarr/
+/jellyseerr/
+/sabnzbd/
+/qbittorrent/
+/gluetun/
+
+# Editor / OS noise
+*.swp
+.DS_Store
