@@ -1,6 +1,6 @@
 # palimpsest-stack — operator notes
 
-Built against `contract.md` **v2 (2026-08-04)**. This file covers what is
+Built against `contract.md` **v3 (2026-08-04)**. This file covers what is
 configured, what you have to do by hand, how to verify it, and where to look
 first when a service breaks.
 
@@ -33,11 +33,17 @@ settings below enable AV1 decoding but nothing expects AV1 output.
 | qBittorrent | `lscr.io/linuxserver/qbittorrent` | `5.2.3` | via gluetun | tailnet only |
 | gluetun | `qmcgaw/gluetun` | `v3.41.3` | publishes 8080 for qBittorrent | tailnet only |
 
-Everything in the "tailnet only" rows binds `BIND_ADDR_TAILNET`. Jellyseerr
-alone binds `BIND_ADDR_LAN`. Jellyfin is host-networked and is not published by
-Docker at all, so the host firewall is its only protection. See contract §5.2
-and the long comment in `.env.example` — the two bind variables are not
-interchangeable and collapsing them back into one breaks the policy silently.
+Every "tailnet only" row binds `BIND_ADDR_TAILNET`. **Jellyseerr is published
+twice** — once on `BIND_ADDR_LAN`, once on `BIND_ADDR_TAILNET` — because it is
+reachable from two places and, per contract §5.2, **no published port ever
+binds `0.0.0.0`**. Jellyfin is host-networked and not published by Docker at
+all, so the host firewall governs it and is its only protection.
+
+The reason for the whole arrangement, in one line: Docker DNATs published ports
+in `PREROUTING`, so they never reach `INPUT` and the host firewall is never
+consulted for them. For anything Docker publishes, the bind address *is* the
+enforcement. There is deliberately no firewall rule for 5055 — an inert rule
+that reads as protection is worse than no rule. See `.env.example`.
 
 ### Why these tags
 
@@ -105,11 +111,20 @@ cp .env.example .env && chmod 600 .env && $EDITOR .env
 
 Two things need real values:
 
-- **`BIND_ADDR_TAILNET`** — set to this machine's tailnet address
-  (`tailscale ip -4`). The default of `127.0.0.1` fails closed and is safe for
-  bring-up over an SSH tunnel. Leave **`BIND_ADDR_LAN`** at `0.0.0.0`; that is
-  correct, not an oversight. Read the comment in `.env.example` before touching
-  either.
+- **`BIND_ADDR_TAILNET`** — this machine's tailnet address (`tailscale ip -4`).
+  The default of `127.0.0.1` fails closed and is safe for bring-up over an SSH
+  tunnel.
+- **`BIND_ADDR_LAN`** — this machine's DHCP-reserved LAN address. It has **no
+  default and must be set**; with it blank, compose aborts before starting
+  anything:
+
+  ```
+  required variable BIND_ADDR_LAN is missing a value: must be set to this
+  machine's DHCP-reserved LAN address — contract §5.2, no default
+  ```
+
+  That is designed, not broken. It also means contract §7.2's
+  `docker compose config` check fails until `.env` is filled — expected.
 - **The VPN block** — provider name plus WireGuard key/address, from your
   provider's config download. `VPN_SERVICE_PROVIDER` is a fixed vocabulary
   gluetun recognises, not free text.
@@ -292,14 +307,16 @@ rm -f /data/torrents/x /data/media/x
 
 ### Contract §7.2 — stack layer, after bring-up
 
-**This is the outstanding half of the job.** Four checks, and all four have to
+**This is the outstanding half of the job.** Five checks, and all five have to
 be run on palimpsest with their output read:
 
 ```bash
 docker compose -f /opt/palimpsest-stack/compose.yaml config   # parses
 ```
 
-That one has been run (on a workstation, exit 0). The other three have not.
+That one has been run on a workstation (exit 0) — but note it now requires
+`BIND_ADDR_LAN` to be set, so it doubles as a check that `.env` is complete.
+The other four have not been run at all.
 
 #### 1. Hardlinking, from inside a container
 
@@ -325,32 +342,53 @@ If this fails, stop and fix it before importing anything. A broken hardlink path
 does not error; it silently turns every import into a full copy, doubles disk
 usage, and breaks seeding. You find out months later.
 
-#### 2. Exposure scan — this is what proves §5.2 works
+#### 2. Listener check — the one with teeth
 
-Run **from a LAN host that is not on the tailnet**. Running it from palimpsest
-itself, or from a tailnet peer, proves nothing — the whole point is to see what
-an ordinary machine on the home network can reach.
+Run **on palimpsest**. This is the check that would have caught the v2 defect,
+and it is the only one in §7.2 that cannot pass while §5.2 is violated:
+
+```bash
+ss -ltnp | awk '$4 !~ /^\[/ {print $4}' | sort -u
+```
+
+Two things must hold:
+
+- **No Docker-published port shows `0.0.0.0:` or `*:`.** Any that does is
+  listening on every interface, and no firewall rule will constrain it.
+- **5055 appears twice**, on two distinct addresses — the LAN address and the
+  tailnet address. Once means one of Jellyseerr's two bindings did not take;
+  check that `BIND_ADDR_LAN` is not accidentally equal to `BIND_ADDR_TAILNET`,
+  since compose silently deduplicates identical `host_ip:port` pairs rather
+  than complaining.
+
+The six tailnet-only ports (6767, 7878, 8080, 8081, 8989, 9696) must appear
+only on the tailnet address.
+
+The `awk` filter drops IPv6 listeners so the output stays readable; if you want
+to see those too, drop it.
+
+#### 3. Exposure scan
+
+Run **from a LAN host that is not on the tailnet**. From palimpsest itself, or
+from a tailnet peer, it proves nothing — the point is what an ordinary machine
+on the home network can reach.
 
 ```bash
 nmap -Pn -p 22,5055,6767,7878,8080,8081,8096,8989,9696 <palimpsest-lan-ip>
 ```
 
-Exactly three may answer: **22, 5055, 8096**. Everything else must be filtered
-or closed.
+Exactly three may answer: **22, 5055, 8096**. Everything else filtered or closed.
 
-If an admin UI responds, the bind address is wrong — check `BIND_ADDR_TAILNET`
-in `.env` before looking at anything else. A firewall rule that appears correct
-is not evidence here: Docker's DNAT means the rule is never consulted
-(contract §5.2). Confirm what is actually bound:
+**This check is necessary but not sufficient, and it is important to know why.**
+It passes whether or not §5.2 is implemented correctly: 5055 is *supposed* to
+answer from the LAN, so a Jellyseerr wrongly bound to `0.0.0.0` produces exactly
+the same scan result as one correctly bound to the LAN address. That is how the
+v2 defect survived review. Check 2 above is what distinguishes them; run both.
 
-```bash
-ss -ltnp | grep -E ':(5055|6767|7878|8080|8081|8989|9696)'
-```
+If an admin UI answers, `BIND_ADDR_TAILNET` is wrong. Do not go looking at the
+firewall — for Docker-published ports it is never consulted (contract §5.2).
 
-Admin UIs should show the tailnet address, not `0.0.0.0`. Jellyseerr on 5055 is
-the one legitimate `0.0.0.0`.
-
-#### 3. VPN egress
+#### 4. VPN egress
 
 ```bash
 docker compose exec gluetun sh -c 'wget -qO- https://ipinfo.io/ip'
@@ -376,8 +414,9 @@ Should be `media media 775`. If new files land as `root root` or `0644`, the
 | **Jellyfin: no hardware transcode** | `docker compose exec jellyfin ls -l /dev/dri`, then `id` inside it — group 303 must be present. Then `vainfo` on the host. |
 | **Jellyfin unreachable but running** | It is on host networking; there is no port mapping to be wrong. Check the NixOS firewall, not this stack. |
 | **Admin UI unreachable over tailnet** | `BIND_ADDR_TAILNET` in `.env`. If it is `127.0.0.1` (the default), that is working as designed — set it to the tailnet IP and `docker compose up -d`. |
-| **Admin UI reachable from the LAN** | Same variable, opposite failure, and the serious one. `ss -ltnp` to see what is actually bound. Do not look at the firewall — Docker's DNAT means it is never consulted (§5.2). |
-| **Jellyseerr unreachable from the LAN** | `BIND_ADDR_LAN` should be `0.0.0.0`. If it is, the problem is the host firewall, which is palimpsest-system's. |
+| **Admin UI reachable from the LAN** | Same variable, opposite failure, and the serious one. `ss -ltnp` to see what is actually bound; anything on `0.0.0.0` is the bug. Do not look at the firewall — Docker's DNAT means it is never consulted (§5.2). |
+| **Jellyseerr unreachable from the LAN** | `ss -ltnp \| grep 5055` — it must appear on two addresses. If only one, `BIND_ADDR_LAN` is unset, wrong, or equal to `BIND_ADDR_TAILNET` (compose silently dedupes identical pairs). Not a firewall problem: there is no firewall rule for 5055 by design. |
+| **`required variable BIND_ADDR_LAN is missing a value`** | Working as designed — it has no default. Set it to the DHCP-reserved LAN address in `.env`. |
 | **`docker compose up` fails: "cannot assign requested address"** | `BIND_ADDR_TAILNET` names an address that does not exist yet — tailscaled has not come up. Contract §3 makes this a start precondition on the unit. |
 | **Jellyfin clients don't auto-discover** | UDP 1900/7359 inbound, LAN only. Opened in palimpsest-system, not here. TCP 8096 working tells you nothing about this. |
 | **qBittorrent unreachable** | Check gluetun first: `docker compose ps gluetun` (must be `healthy`), then its logs. qBittorrent cannot start until gluetun is healthy, by design. |

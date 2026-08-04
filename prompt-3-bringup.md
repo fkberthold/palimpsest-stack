@@ -1,7 +1,7 @@
 # Prompt 3 — Bring-up and verification
 
 Run this **on palimpsest**, after the system layer is installed and contract
-§7.1 passes. Attach `contract.md` (v2).
+§7.1 passes. Attach `contract.md` (v3).
 
 Prompt 2 authored the stack; nothing in it has been executed. This session is
 the empirical half — you are starting containers, reading logs, and turning
@@ -11,7 +11,7 @@ the empirical half — you are starting containers, reading logs, and turning
 
 I am bringing up the container stack on a headless NixOS media server. The
 compose file and documentation already exist in `palimpsest-stack` and were
-written against `contract.md` v2, which I have attached. **Every value in the
+written against `contract.md` v3, which I have attached. **Every value in the
 contract is fixed.** If one appears wrong, stop and tell me; do not work around
 it. Amendments happen in the contract, by me.
 
@@ -56,18 +56,33 @@ delay profiles.
 
 ## What must be verified
 
-**Contract §7.2, all four checks, with output:**
+**Contract §7.2, all five checks, with output:**
 
-1. `docker compose config` parses.
+1. `docker compose config` parses. Note this now also proves `.env` is
+   complete: `BIND_ADDR_LAN` has no default and compose aborts without it.
 2. **Hardlinking from inside a container** — `sonarr`, `radarr` and
-   `qbittorrent` each separately. Same inode, `links=2`. This is the important
-   one: a broken path mapping does not error, it silently turns every import
-   into a full copy and you find out months later.
-3. **Exposure scan from a LAN host that is not on the tailnet.** Only 22, 5055
-   and 8096 may answer. If an admin UI responds, `BIND_ADDR_TAILNET` is wrong —
-   check contract §5.2 before looking at the firewall, which Docker's DNAT
-   means is never consulted for published ports.
-4. **VPN egress** — gluetun's public IP must differ from the host's.
+   `qbittorrent` each separately. Same inode, `links=2`. A broken path mapping
+   does not error; it silently turns every import into a full copy and you find
+   out months later.
+3. **Listener check on palimpsest** — the one with teeth:
+
+   ```bash
+   ss -ltnp | awk '$4 !~ /^\[/ {print $4}' | sort -u
+   ```
+
+   No Docker-published port may show `0.0.0.0:` or `*:`. **5055 must appear
+   twice**, on two distinct addresses (LAN and tailnet); the six tailnet-only
+   ports only on the tailnet address. If 5055 appears once, check whether
+   `BIND_ADDR_LAN` equals `BIND_ADDR_TAILNET` — compose silently deduplicates
+   identical `host_ip:port` pairs rather than complaining.
+4. **Exposure scan from a LAN host that is not on the tailnet.** Only 22, 5055
+   and 8096 may answer. Necessary but *not* sufficient, and know why: 5055 is
+   supposed to answer from the LAN, so this scan passes identically whether
+   Jellyseerr is correctly bound or wrongly bound to `0.0.0.0`. That is how the
+   v2 defect survived. Check 3 is what distinguishes them. If an admin UI
+   responds, `BIND_ADDR_TAILNET` is wrong — go to contract §5.2, not to the
+   firewall, which Docker's DNAT means is never consulted for published ports.
+5. **VPN egress** — gluetun's public IP must differ from the host's.
 
 **Plus the hardware transcode proof**, which is not in §7.2 but is the other
 thing that lies when it fails: force a transcode and watch `intel_gpu_top` for

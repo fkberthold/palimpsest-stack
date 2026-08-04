@@ -1,7 +1,7 @@
 # CLAUDE.md — palimpsest-stack
 
 Guidance for future sessions working in this repo. Read `contract.md` first
-(currently **v2, 2026-08-04** — check §8's changelog); this file assumes it.
+(currently **v3, 2026-08-04** — check §8's changelog); this file assumes it.
 
 ## What this repo is
 
@@ -46,7 +46,7 @@ At runtime, read the live system rather than this copy: `id media`,
 | `/data/transcode` → `/transcode` | Jellyfin |
 | `/dev/dri` | Jellyfin only |
 | Ports 8096/5055/6767/7878/8080/8081/8989/9696 | `ports:` and `network_mode: host` |
-| §5.2 bind-address split | `BIND_ADDR_TAILNET` / `BIND_ADDR_LAN` in `.env` |
+| §5.2 bind-address enforcement | `BIND_ADDR_TAILNET` / `BIND_ADDR_LAN` in `.env`; Jellyseerr published twice |
 
 These are hardcoded in `compose.yaml` rather than pushed into `.env`
 deliberately: they belong in the tracked file, where a change to one is visible
@@ -72,17 +72,22 @@ Things that look like they could be simplified, and should not be:
   it at `http://gluetun:8080`.
 - **`depends_on: service_healthy` on gluetun.** Keeps the torrent client from
   ever seeing a bare WAN route during startup.
-- **Two bind-address variables, not one** (contract §5.2). Docker publishes by
-  DNAT in `PREROUTING`, which never traverses the `INPUT` chain where the host
-  firewall lives, so publishing on `0.0.0.0` exposes a service to the LAN
-  regardless of what NixOS's firewall says. Binding the publish address is what
-  actually enforces §5.1, and §5.1 has two classes:
-  `BIND_ADDR_TAILNET` (admin UIs, default `127.0.0.1`, fails closed) and
-  `BIND_ADDR_LAN` (Jellyseerr alone, default `0.0.0.0`, bounded by firewall
-  source rules). **Do not collapse them into one variable** — the result is
-  either admin UIs on the LAN or the family locked out of Jellyseerr, and
-  neither fails loudly. Jellyfin is host-networked, so §5.2 does not apply to
-  it and cannot protect it; the firewall is its only layer.
+- **No published port binds `0.0.0.0`, and Jellyseerr is published twice**
+  (contract §5.2). Docker publishes by DNAT in `PREROUTING`; the destination is
+  rewritten before the packet reaches `INPUT`, where the host firewall lives. A
+  firewall rule naming a Docker-published port is never consulted — it passes
+  review and constrains nothing. So for published ports the bind address is the
+  only enforcement, and a service reachable from two places gets two explicit
+  mappings rather than one broad one. `BIND_ADDR_TAILNET` defaults to
+  `127.0.0.1` (fails closed); `BIND_ADDR_LAN` has **no default** and uses
+  compose's `${VAR:?message}` form so an unset value aborts bring-up.
+  Jellyfin is host-networked, so §5.2 does not apply to it and cannot protect
+  it; the firewall is its only layer, and that rule is real.
+- **`${BIND_ADDR_LAN:?...}` is load-bearing, not decoration.** Do not replace it
+  with a default, and do not assume two identical mappings would collide
+  instead: compose **silently deduplicates** identical `host_ip:port` pairs and
+  exits 0. Verified. That path would leave Jellyseerr bound to loopback only,
+  unreachable, with no error anywhere.
 - **The compose file is a plain file, not in the Nix store** (contract §3). It
   is the thing that changes most often; requiring a `nixos-rebuild` per tweak
   would make iteration miserable.
