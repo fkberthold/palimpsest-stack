@@ -409,6 +409,14 @@ container itself.
    without comment. Same shape as Sonarr's monitoring switch: present,
    apparently configured, deliberately ignored.
 
+   **Added series before creating the profile?** Nothing is lost — subtitles
+   are fetched independently of the download, at any time afterwards. Setting a
+   profile as default only affects items added from then on, so assign it
+   retroactively: Series → **Mass Edit** → select → set profile → Save. Then
+   System → **Tasks** → run *Sync with Sonarr*, and **Wanted → Search All**. An
+   empty Wanted list with profiles assigned means Bazarr believes nothing is
+   missing, usually because the files already carry embedded subtitles.
+
    Worth enabling while you are there: **subtitle synchronization**, which
    time-shifts a subtitle to match your specific release and removes most
    "subs are two seconds off" complaints.
