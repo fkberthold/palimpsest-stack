@@ -387,9 +387,31 @@ container itself.
 
    Transcoding settings below.
 5. **Bazarr** (`:6767`) — Settings → Sonarr and Settings → Radarr, using
-   `http://sonarr:8989` and `http://radarr:7878` plus their API keys. Then
-   Settings → Providers: enable a few. OpenSubtitles needs an account; several
-   others do not.
+   `http://sonarr:8989` and `http://radarr:7878` plus their API keys.
+
+   **Providers** — a small set beats a large one. More providers means slower
+   searches, rate-limiting, and worse matches, because low-quality sources
+   return plausible but mistimed subtitles. For English, start with:
+   **Embedded Subtitles** (no account, no network — pulls subs already inside
+   the file, and solves a good share of cases before anything is queried),
+   **OpenSubtitles.com** (free account; note `.com`, the legacy `.org` provider
+   is largely dead), **Podnapisi**, **TVSubtitles**, **Subdl**. Skip Addic7ed
+   unless you need it — good TV coverage, aggressive rate limits, blocks
+   readily. OpenSubtitles' free tier caps daily downloads, which a bulk
+   backfill hits in minutes; backfill over several days or take VIP for the
+   first pass.
+
+   **A language profile is required, and its absence is silent.** Providers
+   alone do nothing. Settings → Languages → create a profile, add your
+   language, set it as default for Series and Movies — then check Bazarr's own
+   Series and Movies lists, because items already synced from Sonarr/Radarr can
+   arrive with **no profile assigned** and anything without one is skipped
+   without comment. Same shape as Sonarr's monitoring switch: present,
+   apparently configured, deliberately ignored.
+
+   Worth enabling while you are there: **subtitle synchronization**, which
+   time-shifts a subtitle to match your specific release and removes most
+   "subs are two seconds off" complaints.
 6. **Jellyseerr** (`:5055`) — connects to everything, which is why it is last.
    Jellyfin's URL here is **`http://host.docker.internal:8096`**, not
    `http://jellyfin:8096`: Jellyfin is on host networking and has no address on
