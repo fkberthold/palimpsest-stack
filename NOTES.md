@@ -473,6 +473,61 @@ pasted between them.
 | Radarr | Settings → General | Prowlarr, Bazarr, Jellyseerr |
 | Indexer | the indexer's own website profile | Prowlarr |
 
+## Using it — where things are requested and where they appear
+
+The stack has two front doors and they are not interchangeable:
+
+- **Jellyseerr** (`:5055`) — for *wanting* things. Search, click Request, done.
+  This is what family members use; they sign in with their Jellyfin accounts.
+- **Jellyfin** (`:8096`) — for *watching* what has already arrived. It is not a
+  place to look for new material.
+
+Sonarr and Radarr are the admin view behind Jellyseerr. Day to day you should
+not need them; you go there when something needs a nudge.
+
+```
+Jellyseerr  →  Sonarr / Radarr  →  Prowlarr → indexer  →  SABnzbd
+                                                             ↓
+                         Jellyfin  ←  /data/media  ←  import
+```
+
+**Adding something directly**, which is worth doing once to see the machinery:
+Sonarr → Series → Add New (root folder `/data/media/tv`), or Radarr → Movies →
+Add New (`/data/media/movies`). Two settings account for most confusion:
+
+- **Monitoring** is the "do I want this?" switch. Nothing unmonitored is ever
+  searched for. A show sitting in the list doing nothing is usually this.
+- **Quality Profile** is the accepted range. Stay at 1080p without a specific
+  reason: 4K forces a transcode on most clients, which is a thing the iGPU
+  passthrough exists to survive, not to do continuously.
+
+**Test with something old and popular first.** Retention and indexer coverage
+are best for well-known older material, so a ten-year-old film tests your
+pipeline rather than testing whether the release exists at all.
+
+**Following a request through:** Activity → Queue (did it grab?), SABnzbd
+(is it downloading?), Activity → History (did it import?), then
+`ls /data/media/movies`. If the queue stays empty, use **Interactive Search**
+— the magnifying glass on an episode or film. It lists every release the
+indexer returned and why each was rejected, and it is the most useful
+diagnostic page in the stack.
+
+### Telling Jellyfin about new files
+
+Jellyfin's real-time folder monitoring should notice imports on its own, but it
+is unreliable enough that the notification path is worth wiring:
+
+1. Jellyfin → Dashboard → **API Keys** → create one.
+2. Sonarr → Settings → **Connect** → **+** → Emby/Jellyfin:
+   - URL: **`http://host.docker.internal:8096`** — *not* `http://jellyfin:8096`.
+     Jellyfin is host-networked and has no address on the bridge network.
+   - Paste the API key; enable **On Import** and **On Upgrade**.
+3. Same in Radarr.
+
+`sonarr`, `radarr` and `jellyseerr` carry an `extra_hosts` entry mapping
+`host.docker.internal` to the bridge gateway, which is what makes that hostname
+resolve at all. A container without that entry cannot reach Jellyfin by name.
+
 ## Jellyfin transcoding
 
 Dashboard → Playback → Transcoding:
