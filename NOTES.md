@@ -228,6 +228,8 @@ in a web UI after the service is up:
 | Prowlarr → Sonarr/Radarr app keys | Generated; Prowlarr UI → Settings → Apps |
 | Sonarr/Radarr → download client | Their own UIs. qBittorrent's password is **generated at first start and printed to its log**, not chosen by you — see below |
 | Jellyfin admin account | Jellyfin's first-run wizard |
+| Prowlarr / Sonarr / Radarr / Bazarr admin logins | each app's first-run auth prompt — see "Authentication on the admin apps" |
+| SABnzbd admin login | Config → General, alongside its API key |
 | Jellyseerr → Jellyfin/Sonarr/Radarr | Jellyseerr's setup wizard, using the others' API keys |
 
 ---
@@ -372,6 +374,38 @@ container itself.
    `http://jellyfin:8096`: Jellyfin is on host networking and has no address on
    the bridge network. Sonarr and Radarr use their normal container names and
    API keys.
+
+### Authentication on the admin apps — one trap
+
+Prowlarr, Sonarr, Radarr and Bazarr each demand an authentication choice on
+first run. Two settings, and the second one matters more than it looks:
+
+- **Authentication Method** → username and password. Prefer **Forms** (login
+  page) over **Basic** (browser popup); Basic is handled badly by some tools.
+- **Authentication Required** → leave at **Enabled**. **Do not** select
+  "Disabled for Local Addresses."
+
+That second option exempts requests from private/RFC1918 addresses. Under
+contract v4 every service binds the **LAN address** and there is no remote path
+at all, so every request that can reach these apps comes from a local address.
+On this deployment, "disabled for local addresses" and "disabled" are the same
+setting — it reads like a convenience and is a complete removal.
+
+§5.2's bind addresses govern *what can reach the port*. They say nothing about
+*who may use the service* once it is reachable. The LAN is not a trust boundary:
+televisions, guest phones and everything else on it reach these ports by design.
+
+**Enabling auth does not break the app wiring.** Inter-app calls authenticate
+with the `X-Api-Key` header, which bypasses forms auth entirely. The only cost
+is a browser login.
+
+Each app's password is a §6 secret: password manager, not `.env`, not git.
+
+**Locked out?** Stop the container, edit that app's `config.xml` in its config
+directory on the host — e.g. `/opt/palimpsest-stack/prowlarr/config.xml` — and
+change the `<AuthenticationMethod>` element, then start it again. Older builds
+accept `None`, recent ones use `External`. Being able to do this from the host
+is a side benefit of the bind-mounted config directories.
 
 ### Where each API key comes from
 
