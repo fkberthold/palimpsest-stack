@@ -588,6 +588,62 @@ case: `docker compose exec jellyfin ls -l /dev/dri` (the container must see
 
 ---
 
+## Jellyfin plugins — installed in the UI, not in this repo
+
+**Plugins are runtime state, not source.** They are installed through Jellyfin's
+own Dashboard and land in `/opt/palimpsest-stack/jellyfin/config/plugins`, which
+is a bind mount and is gitignored. Nothing in `compose.yaml` changes, no image
+changes, and nothing about a plugin is tracked here.
+
+The consequence worth knowing: **a fresh clone of this repo does not reproduce
+your plugins.** They survive `docker compose up -d` and container recreation
+because the config directory is a bind mount, but they live and die with that
+directory — so they are covered by the config-directory backup described at the
+end of this file, and by nothing else. A plugin's own settings (SmartLists rules,
+for instance) live in the same place and have the same property.
+
+### Installing one
+
+Dashboard → Plugins → **Repositories** → add the repository URL, then Dashboard
+→ Plugins → **Catalog** → install → restart Jellyfin.
+
+Adding a third-party repository means Jellyfin fetches and executes code from
+that source on every update check. That is a real trust decision on an otherwise
+carefully-scoped box; weigh it per plugin rather than by habit.
+
+### SmartLists — dynamic playlists and collections from rules
+
+Fills the one real gap in Jellyfin's native list features. Tags, Collections and
+Playlists all exist natively but are **manual** — nothing auto-populates. This
+plugin builds playlists *and* collections from rules that re-evaluate as the
+library changes.
+
+- Repository: `https://raw.githubusercontent.com/jyourstone/jellyfin-plugin-manifest/main/manifest.json`
+- Source: `jyourstone/jellyfin-smartlists-plugin`, AGPL-3.0
+- **Not** `ankenyr/jellyfin-smartplaylist-plugin`, which most search results
+  still point at and which is dead — last release 2021, last commit mid-2024.
+
+**Version coupling.** The plugin numbers releases to match the Jellyfin major it
+targets. The published manifest currently carries only `targetAbi` 10.10.0 and
+10.11.0 (newest 10.11.30.2), so the catalogue will offer this server nothing but
+10.11-compatible builds — the `v12.0.0.x-rc` builds exist only as GitHub release
+downloads and cannot arrive through the UI. **This means: install via the
+catalogue, never by hand from GitHub releases.** Doing it by hand is the only way
+to get a v12 build onto a 10.11 server.
+
+If you come to depend on this plugin, Jellyfin is no longer independently
+upgradable — moving to Jellyfin 12 breaks it until the plugin's v12 line ships
+stable and reaches the manifest. Check the manifest's `targetAbi` values before
+bumping the `jellyfin` image tag in `compose.yaml`.
+
+### Hand-applied tags can be wiped by a metadata refresh
+
+Tags set by hand in the metadata editor are provider-overwritable. A refresh run
+with "overwrite all metadata" replaces them. Lock the Tags field on anything
+tagged manually, or keep tags in `.nfo` sidecars, which survive refreshes. This
+matters more once rule-based lists depend on those tags, because the lists go
+quietly empty rather than erroring.
+
 ## Verification
 
 ### Contract §7.1 — system layer, before the stack exists
