@@ -375,6 +375,39 @@ container itself.
    the bridge network. Sonarr and Radarr use their normal container names and
    API keys.
 
+### Host-header validation — an auth-shaped error that is not about auth
+
+**Symptom:** one service cannot reach another by container name and fails with
+`403 Forbidden` or `Unauthorized`. It looks like a wrong API key or password.
+It is not.
+
+**Cause:** several of these apps validate the HTTP `Host` header as
+DNS-rebinding protection, and their default whitelists accept IP addresses and
+`localhost` but not arbitrary hostnames. Every inter-service call in this stack
+uses a **container name** — `http://sabnzbd:8080`, `http://sonarr:8989` — so the
+header carries a name the receiving app has never been told about, and the
+request is rejected before the credential is examined.
+
+The tell: it works in your browser at `http://192.168.x.y:8081` (Host header is
+an IP, which passes) and fails from another container (Host header is a name).
+Same service, same key, different name.
+
+**Known cases in this stack:**
+
+| Service | Setting | Add |
+|---|---|---|
+| SABnzbd | `host_whitelist` — Config → General, security section, or Config → Special | `sabnzbd` |
+| qBittorrent | "Server domains" — Options → Web UI (`WebUI\ServerDomains`) | `gluetun`, and any hostname you use |
+
+Both files are on the host, under `/opt/palimpsest-stack/<app>/`, so they can be
+edited without the UI. Restart the container afterwards.
+
+**Do not work around it by pointing at a container IP** — those are reassigned
+on recreate, so it breaks on the next `docker compose up` and does so silently.
+**Do not disable the validation** either; whitelisting the one legitimate name
+keeps the protection intact. Expect to hit this again with any service added
+later that talks to another by name.
+
 ### Authentication on the admin apps — one trap
 
 Prowlarr, Sonarr, Radarr and Bazarr each demand an authentication choice on
