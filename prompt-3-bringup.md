@@ -46,8 +46,9 @@ config directories must be pre-created as `media:media` before the first `up`,
 or Docker creates them root-owned and every container fails to write its
 database in a way whose logs blame the application.
 
-`docker compose pull` all nine images as a discrete step before starting
-anything. The tags were resolved at authoring time and nobody has re-checked
+`docker compose pull` all seven images as a discrete step before starting
+anything. (Seven, not nine: gluetun and qbittorrent are behind the `torrents`
+compose profile and this deployment is usenet-only.) The tags were resolved at authoring time and nobody has re-checked
 them; a withdrawn tag is cheap to fix alone and confusing mid-sequence.
 
 Then bring-up, then the application configuration in the order `NOTES.md`
@@ -56,7 +57,8 @@ delay profiles.
 
 ## What must be verified
 
-**Contract §7.2, all five checks, with output:**
+**Contract §7.2, with output.** This is a usenet-only deployment: the torrent
+path is defined behind a compose profile and is not running, so check 5 is N/A.
 
 1. `docker compose config` parses. Note this now also proves `.env` is
    complete: `BIND_ADDR_LAN` has no default and compose aborts without it. It
@@ -71,17 +73,19 @@ delay profiles.
    ss -ltnp | awk '$4 !~ /^\[/ {print $4}' | sort -u
    ```
 
-   All seven Docker-published ports (5055, 6767, 7878, 8080, 8081, 8989, 9696)
-   must appear on this machine's LAN address and **nowhere else**. None may show
-   `0.0.0.0:` or `*:` — a listener on `0.0.0.0` is the v2 defect returning.
-   Jellyfin's 8096 is host-networked and is not part of this check.
+   **Six** ports — 5055, 6767, 7878, 8081, 8989, 9696 — must appear on this
+   machine's LAN address and **nowhere else**. None may show `0.0.0.0:` or `*:`;
+   a listener on `0.0.0.0` is the v2 defect returning. Contract §7.2 says seven
+   because it counts qBittorrent's 8080, which is behind the `torrents` profile
+   and not running here. Jellyfin's 8096 is host-networked and is not in scope.
 4. **Exposure scan from another LAN host.** Everything should answer; everything
    is LAN-reachable by design under v4. Know what this does *not* prove: a
    service bound to `0.0.0.0` and one bound to the LAN address look identical
    from the LAN, which is exactly how the v2 defect survived review. Check 3 is
    what distinguishes them. Run this anyway — it catches a service that failed
    to start — but do not read a clean scan as evidence about bind addresses.
-5. **VPN egress** — gluetun's public IP must differ from the host's.
+5. **VPN egress** — N/A for this deployment. gluetun is behind the `torrents`
+   profile and not running; say so rather than skipping it silently.
 
 **Plus the hardware transcode proof**, which is not in §7.2 but is the other
 thing that lies when it fails: force a transcode and watch `intel_gpu_top` for
@@ -92,7 +96,7 @@ low-power H.264/HEVC encoder, and expect AV1 decode but not AV1 encode.
 
 ## Deliverables
 
-1. Actual command output for all five §7.2 checks and the transcode proof —
+1. Actual command output for the applicable §7.2 checks and the transcode proof —
    pasted, not summarised, and not a claim that you ran them.
 2. `NOTES.md` updated: replace the "authored, not yet deployed" status block
    with what was actually verified and when. Correct anything bring-up proved

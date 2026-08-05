@@ -30,8 +30,16 @@ settings below enable AV1 decoding but nothing expects AV1 output.
 | Radarr | `lscr.io/linuxserver/radarr` | `6.3.0` | 7878 | LAN only |
 | Bazarr | `lscr.io/linuxserver/bazarr` | `1.6.0` | 6767 | LAN only |
 | SABnzbd | `lscr.io/linuxserver/sabnzbd` | `5.0.4` | 8081 → 8080 in-container | LAN only |
-| qBittorrent | `lscr.io/linuxserver/qbittorrent` | `5.2.3` | via gluetun | LAN only |
-| gluetun | `qmcgaw/gluetun` | `v3.41.3` | publishes 8080 for qBittorrent | LAN only |
+| ~~qBittorrent~~ | `lscr.io/linuxserver/qbittorrent` | `5.2.3` | via gluetun | **profile `torrents` — not running** |
+| ~~gluetun~~ | `qmcgaw/gluetun` | `v3.41.3` | publishes 8080 | **profile `torrents` — not running** |
+
+**This deployment is usenet-only.** The last two rows are defined in
+`compose.yaml` but carry `profiles: ["torrents"]`, so `docker compose up -d`
+starts **seven** services and **six** ports listen — 8080 is not among them.
+Turning them on is two lines in `.env` (`COMPOSE_PROFILES=torrents` plus the
+VPN block) and needs no change in `palimpsest-system`; re-pin both image tags
+first, since they rot unexercised. See the torrent-path comment in
+`compose.yaml`.
 
 **There is no VPN in this design.** Contract v4 removed Tailscale: this server
 exists so a family member outside the house can watch on a **Roku**, which has
@@ -238,7 +246,7 @@ docker compose logs -f jellyfin          # ^C once it says it's listening
 curl -sI http://127.0.0.1:8096/health    # expect 200
 ```
 
-Then the automation layer, then the download clients:
+Then the automation layer, then the download client:
 
 ```bash
 # 2. Automation
@@ -247,21 +255,44 @@ docker compose ps
 
 # 3. Usenet
 docker compose up -d sabnzbd
-
-# 4. Torrents — gluetun must go healthy before qbittorrent will start at all
-docker compose up -d gluetun
-docker compose logs -f gluetun           # look for the tunnel coming up
-docker compose up -d qbittorrent
+docker compose ps                        # expect 7 services, all Up
 ```
 
-Verify the tunnel is actually carrying qBittorrent's traffic — this is the
-whole point of gluetun, and it is contract §7.2's VPN egress check:
+That is the whole stack. gluetun and qbittorrent are behind the `torrents`
+profile and will not appear — that is correct, not a failure.
+
+---
+
+## If you ever enable the torrent path
+
+Everything in this section is inert while `COMPOSE_PROFILES` is unset. It is
+kept because the reasoning is expensive to reconstruct, not because it runs.
+
+**Re-pin `gluetun` and `qbittorrent` image tags first.** They were resolved
+2026-08-03 and are not exercised while the profile is off. gluetun has renamed
+provider environment variables across versions, so the `.env` VPN block may not
+match whatever you pull.
+
+```bash
+# in .env: fill the VPN block, then add COMPOSE_PROFILES=torrents
+docker compose up -d gluetun
+docker compose logs -f gluetun           # look for the tunnel coming up
+docker compose up -d qbittorrent         # blocked until gluetun is healthy
+```
+
+Then verify the tunnel actually carries the traffic — contract §7.2's VPN
+egress check, which only applies when this profile is on:
 
 ```bash
 docker compose exec gluetun sh -c 'wget -qO- https://ipinfo.io/ip'
 # Must NOT be your home WAN address. Compare:
 curl -s https://ipinfo.io/ip
 ```
+
+Sonarr and Radarr would then need qBittorrent added at `http://gluetun:8080`
+(**not** `http://qbittorrent:8080` — it has no network identity of its own),
+and their delay profiles changed from usenet-only to preferred-usenet with a
+45-minute torrent delay.
 
 ### Getting into qBittorrent the first time — two 5.x gotchas
 
@@ -293,28 +324,66 @@ provide. The equivalent keys in `qBittorrent.conf` are
 
 ## Application configuration, in order
 
-**Prowlarr first**, then Sonarr/Radarr, then Jellyfin, then Jellyseerr last.
-Each step depends on the previous one existing.
+**SABnzbd first**, then Prowlarr, then Sonarr/Radarr, then Jellyfin, then
+Bazarr and Jellyseerr. Each step depends on the previous one existing.
 
-1. **Prowlarr** (`:9696`) — add indexers. Then Settings → Apps → add Sonarr
-   (`http://sonarr:8989`) and Radarr (`http://radarr:7878`); Prowlarr pushes
-   indexers into both from then on. Use container names, not `localhost`.
-2. **Sonarr** (`:8989`) **and Radarr** (`:7878`):
+Every URL below uses a **container name**, never `localhost` — these services
+talk to each other on the compose bridge network, where `localhost` is the
+container itself.
+
+1. **SABnzbd** (`:8081`) — the provider connection and, critically, the paths.
+   - **Config → Servers → Add**: your usenet provider's hostname, port **563**,
+     **SSL on**, username, password, and a connection count that **matches your
+     plan's limit** — more will get you throttled or blocked, fewer caps speed.
+     Test the server before saving.
+   - **Config → Folders** — this is the step that silently breaks everything if
+     skipped. SABnzbd defaults both folders to `/config/…`, which is on the
+     **root filesystem**, not `/data`. Imports would then be cross-filesystem
+     copies: slow, disk-doubling, and exactly what contract §2 exists to
+     prevent. Set them to:
+     - Temporary Download Folder: `/data/usenet/incomplete`
+     - Completed Download Folder: `/data/usenet/complete`
+   - **Config → General**: copy the **API key**. Sonarr and Radarr need it.
+2. **Prowlarr** (`:9696`) — add your indexer(s) with the API key from each
+   indexer's own profile page. Then Settings → Apps → add Sonarr
+   (`http://sonarr:8989`) and Radarr (`http://radarr:7878`), each with that
+   app's API key; Prowlarr pushes indexers into both from then on.
+3. **Sonarr** (`:8989`) **and Radarr** (`:7878`):
    - Root folders: `/data/media/tv` and `/data/media/movies` respectively.
-   - Download clients: SABnzbd at `http://sabnzbd:8080`, qBittorrent at
-     `http://gluetun:8080` (**not** `http://qbittorrent:8080` — qBittorrent has
-     no network identity of its own; it lives in gluetun's namespace).
-   - **Delay profiles** — Settings → Profiles → Delay Profiles:
-     preferred protocol **Usenet**, usenet delay **0**, torrent delay **45**
-     minutes. Usenet gets first crack; torrents cover what retention missed.
+   - Download client: SABnzbd at `http://sabnzbd:8080` — **8080, the in-container
+     port, not 8081.** 8081 is the host-side mapping and means nothing here.
+     Paste SABnzbd's API key.
+   - **Delay profiles** — Settings → Profiles → Delay Profiles: preferred
+     protocol **Usenet**, usenet delay **0**. There is no torrent client, so the
+     torrent delay is irrelevant; if you later enable the torrents profile, set
+     it to 45 minutes so usenet keeps first crack.
    - Confirm "Use Hardlinks instead of Copy" is on (Settings → Media Management,
-     shown with Advanced toggled). It is the default; confirm anyway.
-3. **Jellyfin** (`:8096`) — libraries at `/data/media/movies` and
+     with Advanced shown). With usenet there is nothing to seed, so the practical
+     effect is that same-filesystem imports stay instant instead of becoming
+     copies. Confirm it anyway.
+4. **Jellyfin** (`:8096`) — libraries at `/data/media/movies` and
    `/data/media/tv`. Transcoding settings below.
-4. **Jellyseerr** (`:5055`) — connects to everything. Jellyfin's URL here is
-   **`http://host.docker.internal:8096`**, not `http://jellyfin:8096`: Jellyfin
-   is on host networking and has no address on the bridge network. Sonarr and
-   Radarr use their normal container names.
+5. **Bazarr** (`:6767`) — Settings → Sonarr and Settings → Radarr, using
+   `http://sonarr:8989` and `http://radarr:7878` plus their API keys. Then
+   Settings → Providers: enable a few. OpenSubtitles needs an account; several
+   others do not.
+6. **Jellyseerr** (`:5055`) — connects to everything, which is why it is last.
+   Jellyfin's URL here is **`http://host.docker.internal:8096`**, not
+   `http://jellyfin:8096`: Jellyfin is on host networking and has no address on
+   the bridge network. Sonarr and Radarr use their normal container names and
+   API keys.
+
+### Where each API key comes from
+
+Nothing here is purchased — these are generated by the apps themselves and
+pasted between them.
+
+| Key | Found in | Needed by |
+|---|---|---|
+| SABnzbd | Config → General | Sonarr, Radarr |
+| Sonarr | Settings → General | Prowlarr, Bazarr, Jellyseerr |
+| Radarr | Settings → General | Prowlarr, Bazarr, Jellyseerr |
+| Indexer | the indexer's own website profile | Prowlarr |
 
 ## Jellyfin transcoding
 
@@ -386,18 +455,24 @@ whether hardlinking works across the path mapping the *containers* see, because
 that is where imports actually happen. A volume layout that breaks it looks
 completely fine from the host:
 
+**Test the path imports actually use.** Contract §7.2 writes this check against
+`/data/torrents`, which is correct for a torrent deployment and wrong for this
+one — nothing is downloaded there. On a usenet-only stack the path that matters
+is SABnzbd's completed folder into the library:
+
 ```bash
 docker compose exec sonarr sh -c '
-  touch /data/torrents/tv/.hltest &&
-  ln /data/torrents/tv/.hltest /data/media/tv/.hltest &&
+  touch /data/usenet/complete/.hltest &&
+  ln /data/usenet/complete/.hltest /data/media/tv/.hltest &&
   echo HARDLINK OK IN CONTAINER;
-  stat -c "links=%h inode=%i" /data/torrents/tv/.hltest /data/media/tv/.hltest;
-  rm -f /data/torrents/tv/.hltest /data/media/tv/.hltest'
+  stat -c "links=%h inode=%i" /data/usenet/complete/.hltest /data/media/tv/.hltest;
+  rm -f /data/usenet/complete/.hltest /data/media/tv/.hltest'
 ```
 
 Both paths must report the **same inode** and `links=2`. Repeat for `radarr`
-and `qbittorrent` — each one has its own volume list and each can be wrong
-independently.
+against `/data/media/movies` — each service has its own volume list and each can
+be wrong independently. (Run the `/data/torrents` version too, and for
+`qbittorrent`, only if you enable the torrents profile.)
 
 If this fails, stop and fix it before importing anything. A broken hardlink path
 does not error; it silently turns every import into a full copy, doubles disk
@@ -412,15 +487,17 @@ and it is the only one in §7.2 that cannot pass while §5.2 is violated:
 ss -ltnp | awk '$4 !~ /^\[/ {print $4}' | sort -u
 ```
 
-One thing must hold, for all seven published ports:
+One thing must hold, for every published port:
 
 - **Every one appears on this machine's LAN address and nowhere else.** None may
   show `0.0.0.0:` or `*:`. A listener on `0.0.0.0` is the v2 defect returning —
   it is listening on every interface and no firewall rule will constrain it.
 
-The seven are 5055, 6767, 7878, 8080, 8081, 8989 and 9696. Jellyfin's 8096 is
-host-networked, so it legitimately binds wherever Jellyfin binds; it is not in
-this check.
+**Expect six, not seven: 5055, 6767, 7878, 8081, 8989, 9696.** Contract §7.2
+says seven because it counts 8080, qBittorrent's WebUI — which is behind the
+`torrents` profile and not running here. Six is correct for this deployment;
+seven only if you enable that profile. Jellyfin's 8096 is host-networked, so it
+legitimately binds wherever Jellyfin binds and is not part of this check.
 
 The `awk` filter drops IPv6 listeners so the output stays readable; if you want
 to see those too, drop it.

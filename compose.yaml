@@ -214,6 +214,7 @@ services:
   # Runs as root: it needs NET_ADMIN to build the tunnel and the firewall.
   gluetun:
     <<: *common
+    profiles: ["torrents"]   # INACTIVE BY DEFAULT — see the note above qbittorrent
     image: qmcgaw/gluetun:v3.41.3
     container_name: gluetun
     cap_add:
@@ -241,9 +242,33 @@ services:
       # published here on gluetun. contract §5.1 — 8080/tcp.
       - "${BIND_ADDR_LAN:?no default — set to this machine's LAN address in .env, contract §5.2}:8080:8080"
 
+  # ---------------------------------------------------------------------------
+  # TORRENT PATH — DEFINED BUT NOT RUNNING.
+  #
+  # This deployment is usenet-only. gluetun and qbittorrent both carry
+  # `profiles: ["torrents"]`, so a plain `docker compose up -d` ignores them
+  # entirely: 7 services start, not 9, and port 8080 is not listening.
+  #
+  # To turn the torrent path on:
+  #   1. Fill the VPN block in .env (it is blank and unused until then).
+  #   2. Add `COMPOSE_PROFILES=torrents` to .env.
+  #   3. Restart the stack. No change to palimpsest-system is needed — that is
+  #      the whole reason this is a profile rather than a second compose file:
+  #      the systemd unit's plain `docker compose up -d` picks up the profile
+  #      from .env, so enabling torrents never crosses the repo boundary.
+  #
+  # BEFORE ENABLING, RE-PIN BOTH IMAGE TAGS. They were resolved 2026-08-03 and
+  # are not exercised while the profile is off, so they rot silently. gluetun in
+  # particular has renamed provider environment variables across versions — do
+  # not assume the VPN block below still matches whatever :latest has become.
+  # Resolve what each registry's `latest` actually points at, as NOTES.md
+  # describes, then update the tags deliberately.
+  # ---------------------------------------------------------------------------
+
   # Torrents, inside gluetun's network namespace. No `ports:` and no
   # `networks:` — it has neither; see gluetun above for both.
   qbittorrent:
+    profiles: ["torrents"]   # INACTIVE BY DEFAULT — see the note above
     image: lscr.io/linuxserver/qbittorrent:5.2.3
     container_name: qbittorrent
     environment:
