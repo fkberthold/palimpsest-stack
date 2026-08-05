@@ -620,6 +620,16 @@ library changes.
 
 - Repository: `https://raw.githubusercontent.com/jyourstone/jellyfin-plugin-manifest/main/manifest.json`
 - Source: `jyourstone/jellyfin-smartlists-plugin`, AGPL-3.0
+- Docs: <https://jellyfin-smartlists-plugin.dinsten.se> — much deeper than the
+  README; field descriptions, operators, examples
+- UI: "SmartLists" in the sidebar under Plugins. Tabs: Create, Manage, Status,
+  Settings. **Tag-driven lists are the main use here**: tag items in Edit
+  Metadata → Tags, then a rule of `Tags contains <x>` produces a collection or
+  playlist that re-evaluates on library updates and playback changes. Collections
+  browse alongside libraries; playlists are ordered and can be per-user.
+- The author discloses that recent work is substantially AI-assisted, with
+  releases and docs reviewed by the project owner. Noted because everything else
+  running on this box was chosen deliberately.
 - **Not** `ankenyr/jellyfin-smartplaylist-plugin`, which most search results
   still point at and which is dead — last release 2021, last commit mid-2024.
 
