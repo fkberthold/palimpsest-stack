@@ -363,8 +363,29 @@ container itself.
      with Advanced shown). With usenet there is nothing to seed, so the practical
      effect is that same-filesystem imports stay instant instead of becoming
      copies. Confirm it anyway.
-4. **Jellyfin** (`:8096`) — libraries at `/data/media/movies` and
-   `/data/media/tv`. Transcoding settings below.
+4. **Jellyfin** — reached at **`http://<palimpsest-lan-ip>:8096`**, and it is
+   the one service in the stack you reach by a different mechanism than all the
+   others. It is host-networked, so it binds the host's interfaces itself, as
+   though installed by a package manager: no Docker port mapping, and
+   `BIND_ADDR_LAN` has nothing to do with it. What keeps it LAN-only is the host
+   firewall — the one firewall rule here that is genuinely load-bearing, because
+   §5.2's bind enforcement cannot reach a container Docker does not publish.
+
+   Confirm before browsing: `curl -sI http://127.0.0.1:8096/health` → 200.
+
+   **In the first-run wizard, decline "Enable automatic port mapping" / UPnP.**
+   That asks the router to open a port from the internet straight to Jellyfin,
+   and if the router has UPnP on, it may succeed — publishing **8096, plaintext,
+   no rate limiting, no MFA** to the world. Contract §5.3 permits exactly one
+   forwarded port, 443, terminating at a TLS proxy that does not exist yet. The
+   wizard's contents vary by version, so confirm afterwards in **Dashboard →
+   Networking** that automatic port mapping is off.
+
+   Libraries: **Movies** → `/data/media/movies`, **Shows** → `/data/media/tv`.
+   In-container paths identical to host paths, per contract §2 — which is what
+   lets Sonarr hardlink an import into a folder Jellyfin is already watching.
+
+   Transcoding settings below.
 5. **Bazarr** (`:6767`) — Settings → Sonarr and Settings → Radarr, using
    `http://sonarr:8989` and `http://radarr:7878` plus their API keys. Then
    Settings → Providers: enable a few. OpenSubtitles needs an account; several
@@ -563,8 +584,14 @@ One thing must hold, for every published port:
 **Expect six, not seven: 5055, 6767, 7878, 8081, 8989, 9696.** Contract §7.2
 says seven because it counts 8080, qBittorrent's WebUI — which is behind the
 `torrents` profile and not running here. Six is correct for this deployment;
-seven only if you enable that profile. Jellyfin's 8096 is host-networked, so it
-legitimately binds wherever Jellyfin binds and is not part of this check.
+seven only if you enable that profile.
+
+**8096 will show as `0.0.0.0:8096` and that is correct.** Jellyfin is
+host-networked, so it binds the host's interfaces itself and the rule above does
+not apply to it — the rule exists because for *Docker-published* ports the bind
+address is the only enforcement. Jellyfin's exposure is bounded by the host
+firewall instead. Do not "fix" this; the only way to change it would be to
+Docker-publish Jellyfin, which contract §5.3 forbids outright.
 
 The `awk` filter drops IPv6 listeners so the output stays readable; if you want
 to see those too, drop it.
