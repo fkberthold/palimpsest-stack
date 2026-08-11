@@ -93,13 +93,22 @@ Things that look like they could be simplified, and should not be:
   negative one: no `ports:` block on `jellyfin`, ever. 8096 is plaintext, has
   no rate limiting and no MFA, and publishing it would bypass the host firewall
   and sit one router forward from the internet in the clear.
-- **The torrent path is behind a compose profile, not deleted.** gluetun and
-  qbittorrent carry `profiles: ["torrents"]`; this deployment is usenet-only, so
-  7 services run and 6 ports listen. It is a profile rather than a second
-  compose file specifically because `COMPOSE_PROFILES` in `.env` activates it —
-  meaning enabling torrents never requires touching the systemd unit in
-  `palimpsest-system`. Verified. Re-pin both image tags before enabling; they
-  rot while unexercised.
+- **The torrent path is behind a compose profile, not deleted.** gluetun,
+  qbittorrent and qbittorrent-port-sync carry `profiles: ["torrents"]`; this
+  deployment ships usenet-only, so 7 services run and 6 ports listen. It is a
+  profile rather than a second compose file specifically because
+  `COMPOSE_PROFILES` in `.env` activates it — meaning enabling torrents never
+  requires touching the systemd unit in `palimpsest-system`. Verified. The VPN
+  block is wired for PIA over OpenVPN with port forwarding; see NOTES.md,
+  "Turning on torrents". Re-pin both image tags if you bump gluetun — its
+  provider variables have moved across releases.
+- **qbittorrent-port-sync keeps the listen port equal to PIA's forwarded
+  port.** gluetun's forwarded port changes on its 60-day refresh or a region
+  change, and a stale listen port kills connectability. The helper reads
+  gluetun's control server at `/v1/portforward` and pushes the value into
+  qBittorrent. Its logic is a tracked script, `scripts/qbit-port-sync.sh`, not
+  an inline blob — auditable, and clear of compose's `$`-escaping. It needs
+  qBittorrent's localhost-auth bypass on; until then it retries harmlessly.
 - **The compose file is a plain file, not in the Nix store** (contract §3). It
   is the thing that changes most often; requiring a `nixos-rebuild` per tweak
   would make iteration miserable.

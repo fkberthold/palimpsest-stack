@@ -228,17 +228,39 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
+    volumes:
+      # Persists the PIA auth token and the forwarded-port lease. Without it,
+      # every restart re-requests a NEW forwarded port and qBittorrent's listen
+      # port has to be re-synced from nothing; with it, the same port survives
+      # restarts and refreshes on its own before the 60-day expiry. gluetun runs
+      # as root, so this directory is root-owned, not media:media.
+      - /opt/palimpsest-stack/gluetun:/gluetun
     environment:
-      # Filled from .env — see .env.example. No credential appears in this
-      # file, ever (contract §6).
-      VPN_SERVICE_PROVIDER: "${VPN_SERVICE_PROVIDER:-}"
-      VPN_TYPE: "${VPN_TYPE:-wireguard}"
-      WIREGUARD_PRIVATE_KEY: "${WIREGUARD_PRIVATE_KEY:-}"
-      WIREGUARD_ADDRESSES: "${WIREGUARD_ADDRESSES:-}"
-      WIREGUARD_PRESHARED_KEY: "${WIREGUARD_PRESHARED_KEY:-}"
+      # PIA over OpenVPN. These are non-secret and hardcoded here rather than in
+      # .env, per this repo's rule: tracked config lives where a diff can see it,
+      # .env carries only secrets and site values. OpenVPN, not WireGuard: PIA
+      # hands out no static WireGuard config, and OpenVPN is the path gluetun
+      # natively integrates with PIA's port-forwarding API.
+      VPN_SERVICE_PROVIDER: "private internet access"
+      VPN_TYPE: "openvpn"
+      # PIA port forwarding. VPN_PORT_FORWARDING_PROVIDER has to be named even
+      # though the service provider already is — verified on the box: unset, no
+      # port is requested. PIA reuses the OpenVPN account credentials for the PF
+      # API, so there is no separate PF username or password. A forwarded port
+      # is what lets peers reach the client, which is what keeps ratio healthy
+      # on trackers that enforce it.
+      VPN_PORT_FORWARDING: "on"
+      VPN_PORT_FORWARDING_PROVIDER: "private internet access"
+      # Region. PIA disables port forwarding on US servers, so this stays
+      # non-US; Montréal is the nearest PF-capable region to the house. It is
+      # overridable from .env if a region misbehaves, default otherwise.
+      SERVER_REGIONS: "${SERVER_REGIONS:-CA Montreal}"
+      # The two secrets, from .env (contract §6). `:-`, not `:?`, on purpose: a
+      # blank value must NOT abort the usenet-only stack when the torrents
+      # profile is off. gluetun fails loudly on its own if these are blank while
+      # it is actually running.
       OPENVPN_USER: "${OPENVPN_USER:-}"
       OPENVPN_PASSWORD: "${OPENVPN_PASSWORD:-}"
-      SERVER_COUNTRIES: "${SERVER_COUNTRIES:-}"
       # Without this, gluetun's killswitch also drops the replies to the
       # published WebUI port and to Sonarr/Radarr's API calls, and qBittorrent
       # looks dead from every direction. Must match the network subnet below.
@@ -250,26 +272,24 @@ services:
       - "${BIND_ADDR_LAN:?no default — set to this machine's LAN address in .env, contract §5.2}:8080:8080"
 
   # ---------------------------------------------------------------------------
-  # TORRENT PATH — DEFINED BUT NOT RUNNING.
+  # TORRENT PATH — CONFIGURED, OFF UNTIL THE PROFILE IS SET.
   #
-  # This deployment is usenet-only. gluetun and qbittorrent both carry
-  # `profiles: ["torrents"]`, so a plain `docker compose up -d` ignores them
-  # entirely: 7 services start, not 9, and port 8080 is not listening.
+  # gluetun, qbittorrent and the port-sync helper all carry
+  # `profiles: ["torrents"]`, so a plain `docker compose up -d` ignores them:
+  # 7 services start, not 10, and port 8080 does not listen.
   #
   # To turn the torrent path on:
-  #   1. Fill the VPN block in .env (it is blank and unused until then).
+  #   1. Set OPENVPN_USER and OPENVPN_PASSWORD in .env (PIA account creds).
   #   2. Add `COMPOSE_PROFILES=torrents` to .env.
   #   3. Restart the stack. No change to palimpsest-system is needed — that is
   #      the whole reason this is a profile rather than a second compose file:
   #      the systemd unit's plain `docker compose up -d` picks up the profile
   #      from .env, so enabling torrents never crosses the repo boundary.
   #
-  # BEFORE ENABLING, RE-PIN BOTH IMAGE TAGS. They were resolved 2026-08-03 and
-  # are not exercised while the profile is off, so they rot silently. gluetun in
-  # particular has renamed provider environment variables across versions — do
-  # not assume the VPN block below still matches whatever :latest has become.
-  # Resolve what each registry's `latest` actually points at, as NOTES.md
-  # describes, then update the tags deliberately.
+  # The VPN block above was verified against gluetun v3.41.3 on 2026-08-11: PIA
+  # over OpenVPN, region CA Montreal, a forwarded port obtained in ~15s. Re-pin
+  # both image tags again if you bump gluetun — its provider variables have
+  # moved across releases before.
   # ---------------------------------------------------------------------------
 
   # Torrents, inside gluetun's network namespace. No `ports:` and no
@@ -289,6 +309,28 @@ services:
       gluetun:
         condition: service_healthy   # do not start until the tunnel is up, so
                                      # the client never sees a bare WAN route
+    restart: unless-stopped
+
+  # Keeps qBittorrent's listen port equal to whatever PIA forwards. gluetun's
+  # control server publishes the current port at /v1/portforward; this reads it
+  # and pushes it into qBittorrent's WebUI API. It shares gluetun's network
+  # namespace, so it reaches both over localhost — the control server on :8000
+  # and qBittorrent on :8080. The logic is a tracked script, not an inline blob,
+  # so it stays auditable and out of compose's $-escaping rules.
+  #
+  # It self-heals: until qBittorrent's localhost-auth bypass is on, the API call
+  # is refused and the loop just retries, so start order does not matter.
+  qbittorrent-port-sync:
+    profiles: ["torrents"]
+    image: curlimages/curl:8.11.0
+    container_name: qbittorrent-port-sync
+    network_mode: "service:gluetun"
+    depends_on:
+      qbittorrent:
+        condition: service_started
+    volumes:
+      - /opt/palimpsest-stack/scripts/qbit-port-sync.sh:/qbit-port-sync.sh:ro
+    entrypoint: ["/bin/sh", "/qbit-port-sync.sh"]
     restart: unless-stopped
 
 # ---------------------------------------------------------------------------

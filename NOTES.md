@@ -809,6 +809,51 @@ Should be `media media 775`. If new files land as `root root` or `0644`, the
 
 ---
 
+## Turning on torrents (PIA)
+
+The torrent path is configured and off, behind `profiles: ["torrents"]`. Three
+services join the stack when it is on: gluetun, qbittorrent, and
+qbittorrent-port-sync.
+
+**How it is wired.** PIA over OpenVPN, verified against gluetun v3.41.3 on
+2026-08-11. The provider, protocol, region (`CA Montreal`) and port forwarding
+are hardcoded in `compose.yaml`; only the PIA account credentials live in
+`.env`. OpenVPN, not WireGuard: PIA hands out no static WireGuard config, and
+OpenVPN is the path gluetun natively integrates with PIA's port-forwarding API.
+`VPN_PORT_FORWARDING_PROVIDER` has to be named even though the provider already
+is, or no port is requested. The `/opt/palimpsest-stack/gluetun` mount persists
+the auth token and the forwarded-port lease, so the same port survives restarts
+and refreshes before its 60-day expiry.
+
+**Turn it on:**
+
+1. Set `OPENVPN_USER` and `OPENVPN_PASSWORD` in `.env` (the PIA `p#######`
+   username and its password, not the email login).
+2. Add `COMPOSE_PROFILES=torrents` to `.env`.
+3. Restart the stack. Nothing in palimpsest-system changes.
+
+**The one runtime step the sync depends on.** qbittorrent-port-sync sets
+qBittorrent's listen port to PIA's forwarded port over the WebUI API from inside
+gluetun's namespace, as an unauthenticated localhost call. That call is refused
+until qBittorrent has "bypass authentication for clients on localhost" on
+(`WebUI\LocalHostAuth=false`). Set it in the WebUI under Options, Web UI, or in
+`qBittorrent.conf`. Until then the sync loop retries without harm. qBittorrent
+5.x also validates the `Host` header (see the fragile-areas list), so a manual
+API call from the LAN needs `-H "Host: localhost"`.
+
+**Verify** from a LAN host:
+
+- Exit IP is in Canada, not your Comcast address:
+  `docker compose exec gluetun sh -c 'wget -qO- https://ipinfo.io/ip'`
+- A port is forwarded: `curl -s http://<BIND_ADDR_LAN>:8080` reachable, and
+  `docker logs qbittorrent-port-sync` shows `set listen_port=<n>`.
+- Killswitch holds: stop gluetun and qBittorrent loses all network, rather than
+  falling back to the bare WAN link.
+
+The `/gluetun` directory holds only a re-fetchable PIA token, so it does not
+need backing up. The old WireGuard and `SERVER_COUNTRIES` lines left in a live
+`.env` from before this change are unused now and can be deleted.
+
 ## What this layer depends on palimpsest-system for
 
 Outside this repo's boundary (contract §0). Both items this repo raised against
