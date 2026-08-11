@@ -859,9 +859,15 @@ Should be `media media 775`. If new files land as `root root` or `0644`, the
 
 ## Turning on torrents (PIA)
 
-The torrent path is configured and off, behind `profiles: ["torrents"]`. Three
-services join the stack when it is on: gluetun, qbittorrent, and
-qbittorrent-port-sync.
+The torrent path is configured and off, behind `profiles: ["torrents"]`. Four
+services join the stack when it is on: gluetun, qbittorrent,
+qbittorrent-port-sync, and flaresolverr.
+
+**FlareSolverr** clears Cloudflare's browser challenge for Prowlarr. A public
+indexer behind Cloudflare answers Prowlarr with "blocked by CloudFlare
+Protection" until Prowlarr routes to it through FlareSolverr. It is added in
+Prowlarr as an indexer proxy at `http://flaresolverr:8191` with a tag, and every
+indexer carrying that tag routes through it. Internal only, no published port.
 
 **How it is wired.** PIA over OpenVPN, verified against gluetun v3.41.3 on
 2026-08-11. The provider, protocol, region (`CA Montreal`) and port forwarding

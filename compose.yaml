@@ -274,9 +274,9 @@ services:
   # ---------------------------------------------------------------------------
   # TORRENT PATH — CONFIGURED, OFF UNTIL THE PROFILE IS SET.
   #
-  # gluetun, qbittorrent and the port-sync helper all carry
+  # gluetun, qbittorrent, the port-sync helper and flaresolverr all carry
   # `profiles: ["torrents"]`, so a plain `docker compose up -d` ignores them:
-  # 7 services start, not 10, and port 8080 does not listen.
+  # 7 services start, not 11, and port 8080 does not listen.
   #
   # To turn the torrent path on:
   #   1. Set OPENVPN_USER and OPENVPN_PASSWORD in .env (PIA account creds).
@@ -332,6 +332,29 @@ services:
       - /opt/palimpsest-stack/scripts/qbit-port-sync.sh:/qbit-port-sync.sh:ro
     entrypoint: ["/bin/sh", "/qbit-port-sync.sh"]
     restart: unless-stopped
+
+  # Solves Cloudflare's browser challenge for Prowlarr. Some public indexers
+  # sit behind Cloudflare's bot check; Prowlarr is an HTTP client, not a
+  # browser, so it gets bounced with "blocked by CloudFlare Protection".
+  # FlareSolverr runs a headless browser that clears the challenge and hands
+  # the cookies back. Prowlarr points at it as an indexer proxy
+  # (http://flaresolverr:8191) and only indexers tagged for it route through it.
+  #
+  # In the torrents profile, not base: the only Cloudflare-gated indexer here is
+  # a torrent tracker, so it lives and dies with the torrent path. If a
+  # Cloudflare-protected usenet indexer ever needs it, move it to base then.
+  #
+  # No `ports:` — internal only, reached by Prowlarr over the bridge. Nothing
+  # outside the stack talks to it (contract §5.2). No /data mount and no media
+  # identity: it writes nothing to the library.
+  flaresolverr:
+    <<: *common
+    profiles: ["torrents"]
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
+    container_name: flaresolverr
+    environment:
+      LOG_LEVEL: "info"
+      TZ: "America/New_York"
 
 # ---------------------------------------------------------------------------
 # Networking
