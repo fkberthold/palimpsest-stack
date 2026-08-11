@@ -603,6 +603,12 @@ and Radarr has no per-download trigger to collapse. The 12-hour scheduled
 is, I suspect, why earlier occurrences looked like they fixed themselves
 overnight. If a new series opens empty now, run one scan.
 
+One quirk to expect: a fresh import shows its episodes under **Season Unknown**
+until the next scan runs, which then files them under the right season. The
+episodes play fine in the meantime and Jellyseerr still flips to Available.
+Red Dwarf S02 did this on 2026-08-11 (one clean scan on import, Season Unknown,
+then the next scan filed all six under Season 2). Don't chase it.
+
 `sonarr`, `radarr` and `jellyseerr` carry an `extra_hosts` entry mapping
 `host.docker.internal` to the bridge gateway, which is what makes that hostname
 resolve at all. A container without that entry cannot reach Jellyfin by name.
