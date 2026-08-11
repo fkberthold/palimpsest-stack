@@ -1,14 +1,16 @@
 # palimpsest-stack — operator notes
 
-Built against `contract.md` **v3 (2026-08-04)**. This file covers what is
+Built against `contract.md` **v4 (2026-08-04)**. This file covers what is
 configured, what you have to do by hand, how to verify it, and where to look
 first when a service breaks.
 
-**Status: authored, not yet deployed.** Everything below was written and
-syntax-verified on a workstation. Nothing in it has been run against palimpsest
-itself. Contract §7.2 is the outstanding half of the work: until those commands
-have been run on the target and their output read, nothing here is more than a
-plausible claim.
+**Status: deployed and verified on palimpsest, 2026-08-05.** The stack is
+running (seven services, usenet-only), the download → import → library pipeline
+has been exercised end-to-end with real requests, and the contract §7.2 checks
+below have been run on the target — see each check for its recorded result.
+Two items remain the operator's to run from off-box (the LAN `nmap` exposure
+scan, and `intel_gpu_top` during a live transcode); both are noted where they
+appear.
 
 Target hardware, confirmed from the Dell factory build sheet (service tag
 8GH5LR3): **i7-12700H** (Alder Lake-P, 14C/20T) with Intel UHD/Xe iGPU, RTX
@@ -544,21 +546,63 @@ diagnostic page in the stack.
 
 ### Telling Jellyfin about new files
 
-Jellyfin's real-time folder monitoring should notice imports on its own, but it
-is unreliable enough that the notification path is worth wiring:
+**Status: wired and verified, 2026-08-05 — via a Webhook, NOT the built-in
+Emby/Jellyfin connection. The obvious approach does not work here; read on
+before "simplifying" it back.**
 
-1. Jellyfin → Dashboard → **API Keys** → create one.
-2. Sonarr → Settings → **Connect** → **+** → Emby/Jellyfin:
-   - URL: **`http://host.docker.internal:8096`** — *not* `http://jellyfin:8096`.
-     Jellyfin is host-networked and has no address on the bridge network.
-   - Paste the API key; enable **On Import** and **On Upgrade**.
-3. Same in Radarr.
+Jellyfin's real-time folder monitoring is supposed to notice imports on its own,
+but on this box it misses them — it does not reliably see a hardlink appear
+inside a bind mount. So the import path has to poke Jellyfin explicitly. The
+catch is *which* poke:
+
+- The built-in **Sonarr/Radarr → Connect → Emby/Jellyfin** connection sends
+  `POST /Library/Media/Updated` (a *targeted* update) on import. This Jellyfin
+  (10.11.11) answers `204` and then does **nothing** with it — verified by
+  replaying the exact call with a throwaway file, which never appeared. That
+  endpoint is hard-coded in the connection, so the connection cannot be made to
+  work. Do not re-add it.
+- Only a full **`POST /Library/Refresh`** actually scans. It accepts query-param
+  auth and ignores the request body, so a plain **Webhook** notification can
+  call it.
+
+What is configured, in both Sonarr and Radarr (Settings → Connect → **Webhook**,
+On Import + On Upgrade + On Rename):
+
+```
+URL:    http://host.docker.internal:8096/Library/Refresh?api_key=<jellyfin-key>
+Method: POST
+```
+
+Get `<jellyfin-key>` from Jellyfin → Dashboard → **API Keys**. It ends up in the
+webhook URL, which lives in the gitignored arr config dirs alongside their own
+keys — a §6 secret, not a tracked file. Verified end-to-end: firing either app's
+webhook makes Jellyfin pick up a new file with no manual scan.
+
+Trade-off: this triggers a *full* library scan per import rather than a targeted
+one. At this library size that is trivial, and Jellyfin coalesces rapid repeats
+(a season pack importing ten episodes does not cause ten real scans). The 12-hour
+scheduled **Scan Media Library** task stays on as a backstop; there is no need to
+shorten it while the webhook is doing its job.
 
 `sonarr`, `radarr` and `jellyseerr` carry an `extra_hosts` entry mapping
 `host.docker.internal` to the bridge gateway, which is what makes that hostname
 resolve at all. A container without that entry cannot reach Jellyfin by name.
 
 ## Jellyfin transcoding
+
+**Status: applied and verified, 2026-08-05.** The initial bring-up left the
+encoding config at its defaults — `HardwareAccelerationType` was `none` (all
+transcoding on CPU) and the transcode temp path was unset, so segments were
+being written to `/cache` on the NVMe instead of the `/transcode` tmpfs (the
+exact silent-fallback this section warns about, reached from the config side
+rather than the mount side). The settings below have since been applied and
+confirmed: a forced transcode now spawns ffmpeg with `-hwaccel vaapi
+-hwaccel_output_format vaapi`, `scale_vaapi`, the `h264_vaapi` encoder, and
+output under `/transcode`. `vainfo` inside the container reports the Intel iHD
+driver on the Alder Lake-P iGPU with full decode/encode profiles. The one check
+still worth doing from the host is `intel_gpu_top` during a real client
+transcode (below) — it is the only thing that distinguishes a working GPU path
+from a silent software fallback.
 
 Dashboard → Playback → Transcoding:
 
@@ -676,8 +720,12 @@ rm -f /data/torrents/x /data/media/x
 
 ### Contract §7.2 — stack layer, after bring-up
 
-**This is the outstanding half of the job.** Five checks, and all five have to
-be run on palimpsest with their output read:
+**Run on palimpsest, 2026-08-05.** Results: `config` parses; in-container
+hardlinking confirmed for sonarr (`/data/usenet/complete` → `/data/media/tv`)
+and radarr (→ `/data/media/movies`), same inode + `links=2`; the listener check
+shows the expected six LAN-bound ports and nothing on `0.0.0.0` (plus 8096 on
+`0.0.0.0`, correct for host-networked Jellyfin). The VPN-egress check is N/A
+(torrents profile off). The off-box `nmap` scan is still the operator's to run:
 
 ```bash
 docker compose -f /opt/palimpsest-stack/compose.yaml config   # parses
