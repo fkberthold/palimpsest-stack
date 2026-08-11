@@ -546,8 +546,9 @@ diagnostic page in the stack.
 
 ### Telling Jellyfin about new files
 
-**Status: wired and verified, 2026-08-05 — via a Webhook, NOT the built-in
-Emby/Jellyfin connection. The obvious approach does not work here; read on
+**Status: wired and verified 2026-08-05. Sonarr's trigger revised 2026-08-11
+after the refresh-burst incident below. Via a Webhook, NOT the built-in
+Emby/Jellyfin connection. The obvious approach doesn't work here, so read on
 before "simplifying" it back.**
 
 Jellyfin's real-time folder monitoring is supposed to notice imports on its own,
@@ -565,8 +566,10 @@ catch is *which* poke:
   auth and ignores the request body, so a plain **Webhook** notification can
   call it.
 
-What is configured, in both Sonarr and Radarr (Settings → Connect → **Webhook**,
-On Import + On Upgrade + On Rename):
+What is configured (Settings → Connect → **Webhook** in each app):
+
+- **Sonarr**: On Import Complete + On Rename. One call per finished download.
+- **Radarr**: On Import + On Upgrade + On Rename. A movie import is one file.
 
 ```
 URL:    http://host.docker.internal:8096/Library/Refresh?api_key=<jellyfin-key>
@@ -575,14 +578,30 @@ Method: POST
 
 Get `<jellyfin-key>` from Jellyfin → Dashboard → **API Keys**. It ends up in the
 webhook URL, which lives in the gitignored arr config dirs alongside their own
-keys — a §6 secret, not a tracked file. Verified end-to-end: firing either app's
-webhook makes Jellyfin pick up a new file with no manual scan.
+keys (a §6 secret, not a tracked file).
 
-Trade-off: this triggers a *full* library scan per import rather than a targeted
-one. At this library size that is trivial, and Jellyfin coalesces rapid repeats
-(a season pack importing ten episodes does not cause ten real scans). The 12-hour
-scheduled **Scan Media Library** task stays on as a backstop; there is no need to
-shorten it while the webhook is doing its job.
+Don't set Sonarr back to plain On Import. That trigger fires once per episode
+file, and `/Library/Refresh` doesn't coalesce the burst. Each call cancels the
+running scan and queues a new one. A scan canceled mid-write can leave episode
+rows in the database with no season linkage. The series then shows in Jellyfin
+but opens empty. Jellyseerr never marks the request available either, since its
+sync walks series → season → episode.
+
+Red Dwarf S01 hit this on 2026-08-11. Six episodes imported in the same second
+and fired six calls. The first scan died between inserting the episode rows and
+linking them to Season 1 (`OperationCanceledException`, then an EF Core
+connection error, at 15:37 in the Jellyfin log). The later calls in the burst
+canceled the follow-up scans too. One manual library scan repaired the linkage
+in about ten seconds.
+
+An earlier version of this section claimed Jellyfin coalesces rapid repeats. It
+does the opposite, and we'd only tested single-file imports when we wrote that.
+
+Residual risk: two separate downloads finishing within a few seconds still race,
+and Radarr has no per-download trigger to collapse. The 12-hour scheduled
+**Scan Media Library** task repairs any orphaned state on its next pass, which
+is, I suspect, why earlier occurrences looked like they fixed themselves
+overnight. If a new series opens empty now, run one scan.
 
 `sonarr`, `radarr` and `jellyseerr` carry an `extra_hosts` entry mapping
 `host.docker.internal` to the bridge gateway, which is what makes that hostname
@@ -852,6 +871,7 @@ Should be `media media 775`. If new files land as `root root` or `0644`, the
 | **qBittorrent reachable but downloads nothing** | Tunnel is up but the killswitch is eating traffic. Check `FIREWALL_OUTBOUND_SUBNETS` matches `DOCKER_SUBNET`. |
 | **Sonarr/Radarr can't reach qBittorrent** | The host is `gluetun`, not `qbittorrent`. |
 | **Jellyseerr can't reach Jellyfin** | The host is `host.docker.internal`, not `jellyfin`. |
+| **A new series shows in Jellyfin but opens empty, and Jellyseerr never flips to Available** | Refresh-burst race left episodes unlinked. See "Telling Jellyfin about new files". Run one **Scan Media Library**. The 12-hour task also repairs it on its own. |
 | **Imports are slow / disk filling fast** | Hardlinking is broken. Run the in-container check above. This is the expensive failure. |
 | **New files owned by root** | `PUID`/`PGID` did not apply — check you did not add `user:` to a LinuxServer image. |
 
