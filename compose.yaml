@@ -1,6 +1,6 @@
 # palimpsest — media stack
 #
-# Built against contract.md v4 (2026-08-04). Every UID, GID, path and port
+# Built against contract.md v7 (2026-10-12). Every UID, GID, path and port
 # below is a contract value; none of them may be changed here. If one looks
 # wrong, fix it in the contract (and in palimpsest-system), not in this file.
 #
@@ -9,7 +9,7 @@
 # rule naming a Docker-published port is never consulted. For anything Docker
 # publishes, the bind address is the ONLY enforcement. Hence:
 #
-#   No published port ever binds 0.0.0.0. All seven bind ${BIND_ADDR_LAN},
+#   No published port ever binds 0.0.0.0. All eight bind ${BIND_ADDR_LAN},
 #   which has no default — an unset value aborts bring-up rather than starting
 #   a stack that listens on every interface.
 #
@@ -286,9 +286,10 @@ services:
   # ---------------------------------------------------------------------------
   # TORRENT PATH — CONFIGURED, OFF UNTIL THE PROFILE IS SET.
   #
-  # gluetun, qbittorrent, the port-sync helper and flaresolverr all carry
-  # `profiles: ["torrents"]`, so a plain `docker compose up -d` ignores them:
-  # 7 services start, not 11, and port 8080 does not listen.
+  # gluetun, qbittorrent, the port-sync helper, flaresolverr and cleanuparr
+  # all carry `profiles: ["torrents"]`, so a plain `docker compose up -d`
+  # ignores them: 7 services start, not 12, and ports 8080 and 11011 don't
+  # listen.
   #
   # To turn the torrent path on:
   #   1. Set OPENVPN_USER and OPENVPN_PASSWORD in .env (PIA account creds).
@@ -367,6 +368,39 @@ services:
     environment:
       LOG_LEVEL: "info"
       TZ: "America/New_York"
+
+  # Clears fakes and stalled downloads out of qBittorrent and the Sonarr/Radarr
+  # queues, then blocklists the release and searches again. Public trackers
+  # carry fakes that hold an .exe instead of video. qBittorrent's excluded-file
+  # list skips those files, which leaves the torrent at 0% forever, and Sonarr
+  # refuses the rest at import. Before this, both needed clearing by hand.
+  #
+  # In the torrents profile, like flaresolverr, because the fakes come in on
+  # the torrent path. It reaches qBittorrent at http://gluetun:8080 and the
+  # arrs by container name over the bridge.
+  #
+  # Takes PUID/PGID/UMASK like a LinuxServer image, so the same identity
+  # fragment applies. No /data mount: the features in use only talk to APIs.
+  # Its web UI is the only way to configure it, hence the published port
+  # (contract v7, §5.1).
+  cleanuparr:
+    <<: *common
+    profiles: ["torrents"]
+    image: ghcr.io/cleanuparr/cleanuparr:2.10.9
+    container_name: cleanuparr
+    environment:
+      <<: *lsio-env
+      PORT: "11011"
+    volumes:
+      - /opt/palimpsest-stack/cleanuparr:/config
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11011/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    ports:
+      - "${BIND_ADDR_LAN:?no default — set to this machine's LAN address in .env, contract §5.2}:11011:11011"   # contract §5.1
 
 # ---------------------------------------------------------------------------
 # Networking

@@ -1,6 +1,6 @@
 # palimpsest-stack — operator notes
 
-Built against `contract.md` **v4 (2026-08-04)**. This file covers what is
+Built against `contract.md` **v7 (2026-10-12)**. This file covers what is
 configured, what you have to do by hand, how to verify it, and where to look
 first when a service breaks.
 
@@ -32,16 +32,17 @@ settings below enable AV1 decoding but nothing expects AV1 output.
 | Radarr | `lscr.io/linuxserver/radarr` | `6.3.0` | 7878 | LAN only |
 | Bazarr | `lscr.io/linuxserver/bazarr` | `1.6.0` | 6767 | LAN only |
 | SABnzbd | `lscr.io/linuxserver/sabnzbd` | `5.0.4` | 8081 → 8080 in-container | LAN only |
-| ~~qBittorrent~~ | `lscr.io/linuxserver/qbittorrent` | `5.2.3` | via gluetun | **profile `torrents` — not running** |
-| ~~gluetun~~ | `qmcgaw/gluetun` | `v3.41.3` | publishes 8080 | **profile `torrents` — not running** |
+| qBittorrent | `lscr.io/linuxserver/qbittorrent` | `5.2.3` | via gluetun | profile `torrents` |
+| gluetun | `qmcgaw/gluetun` | `v3.41.3` | publishes 8080 | LAN only, profile `torrents` |
+| FlareSolverr | `ghcr.io/flaresolverr/flaresolverr` | `v3.5.0` | none, bridge only | profile `torrents` |
+| Cleanuparr | `ghcr.io/cleanuparr/cleanuparr` | `2.10.9` | 11011 | LAN only, profile `torrents` |
 
-**This deployment is usenet-only.** The last two rows are defined in
-`compose.yaml` but carry `profiles: ["torrents"]`, so `docker compose up -d`
-starts **seven** services and **six** ports listen — 8080 is not among them.
-Turning them on is two lines in `.env` (`COMPOSE_PROFILES=torrents` plus the
-VPN block) and needs no change in `palimpsest-system`; re-pin both image tags
-first, since they rot unexercised. See the torrent-path comment in
-`compose.yaml`.
+**The torrent path is on.** The last four rows, plus the port-sync helper,
+carry `profiles: ["torrents"]`. Without the profile, `docker compose up -d`
+starts **seven** services and **six** ports listen. This deployment sets
+`COMPOSE_PROFILES=torrents` in `.env`, so **twelve** run and **eight** listen,
+adding 8080 and 11011. Switching it is a line in `.env` and needs no change
+in `palimpsest-system`. See the torrent-path comment in `compose.yaml`.
 
 **There is no VPN in this design.** Contract v4 removed Tailscale: this server
 exists so a family member outside the house can watch on a **Roku**, which has
@@ -49,7 +50,7 @@ no Tailscale or WireGuard client, so a tailnet-based access model served nobody.
 Everything is LAN-only, admin UIs included — with no tailnet there is nowhere
 else to put them.
 
-All seven Docker-published services bind `BIND_ADDR_LAN`, once each. Jellyfin
+All eight Docker-published services bind `BIND_ADDR_LAN`, once each. Jellyfin
 is host-networked and not published by Docker at all, so the host firewall
 governs it and is its only protection.
 
@@ -117,7 +118,7 @@ Create them before the first `up`:
 
 ```bash
 sudo install -d -o media -g media -m 0775 \
-  /opt/palimpsest-stack/{prowlarr,sonarr,radarr,bazarr,jellyseerr,sabnzbd,qbittorrent} \
+  /opt/palimpsest-stack/{prowlarr,sonarr,radarr,bazarr,jellyseerr,sabnzbd,qbittorrent,cleanuparr} \
   /opt/palimpsest-stack/jellyfin/{config,cache}
 ```
 
@@ -150,7 +151,7 @@ Two things need real values:
 
 `.env` is gitignored (contract §6) and must stay that way.
 
-### 3. Pull all nine images before starting anything
+### 3. Pull all twelve images before starting anything
 
 The tags were resolved from registry state at authoring time and nobody has
 re-checked them since. Pull first, as a discrete step — a wrong or withdrawn
@@ -161,7 +162,7 @@ sequence:
 docker compose pull
 ```
 
-All nine must succeed. If one fails, fix that tag before going further; do not
+All twelve must succeed. If one fails, fix that tag before going further; do not
 start the services that did pull and come back to it.
 
 ### 3b. Accounts you need to obtain before the stack does anything useful
@@ -849,10 +850,9 @@ One thing must hold, for every published port:
   show `0.0.0.0:` or `*:`. A listener on `0.0.0.0` is the v2 defect returning —
   it is listening on every interface and no firewall rule will constrain it.
 
-**Expect six, not seven: 5055, 6767, 7878, 8081, 8989, 9696.** Contract §7.2
-says seven because it counts 8080, qBittorrent's WebUI — which is behind the
-`torrents` profile and not running here. Six is correct for this deployment;
-seven only if you enable that profile.
+**Expect eight: 5055, 6767, 7878, 8080, 8081, 8989, 9696, 11011.** That's
+contract §7.2's count, and it's what this deployment runs. With the
+`torrents` profile off, expect six, since 8080 and 11011 belong to it.
 
 **8096 will show as `0.0.0.0:8096` and that is correct.** Jellyfin is
 host-networked, so it binds the host's interfaces itself and the rule above does
@@ -917,6 +917,7 @@ Should be `media media 775`. If new files land as `root root` or `0644`, the
 | **Jellyfin clients don't auto-discover** | UDP 1900/7359 inbound, LAN only. Opened in palimpsest-system, not here. TCP 8096 working tells you nothing about this. |
 | **Most containers `Exited (128)` after a rebuild or a network drop** | Docker came up with no LAN address, so every published port failed to bind, and Docker doesn't retry that. Run `docker compose up -d` once the lease is back. Seen 2026-10-08, when a rebuild ran with the cable out. |
 | **gluetun loops on `default route not found`** | Its bridge endpoint wedged when its port publish failed, and a restart doesn't clear it. Recreate it along with its two dependents: `docker compose up -d --force-recreate gluetun qbittorrent qbittorrent-port-sync`. |
+| **Containers show `Up` but Sonarr and friends are unreachable, and nothing grabs** | `docker ps` shows them running with an empty Ports column and no network attached, so they have no published port and no route out. Sonarr then reports every indexer and download client as failed, which reads like a config problem and isn't one. Recreate the affected services, for example `docker compose up -d --force-recreate prowlarr sonarr radarr bazarr sabnzbd jellyseerr`. Seen 2026-10-12. I suspect the 2026-10-08 recovery left them this way, since they'd been up since about then. |
 | **qBittorrent unreachable** | Check gluetun first: `docker compose ps gluetun` (must be `healthy`), then its logs. qBittorrent cannot start until gluetun is healthy, by design. |
 | **qBittorrent says "Unauthorized" with correct credentials** | Host-header validation, not authentication. Add the LAN address to Server domains, or untick "Validate HTTP Host header". See the bring-up section. |
 | **qBittorrent password rejected after a restart** | The generated temporary password is regenerated every start until you set a permanent one. `docker compose logs qbittorrent \| grep -i password`. |

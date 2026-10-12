@@ -1,7 +1,7 @@
 # CLAUDE.md — palimpsest-stack
 
 Guidance for future sessions working in this repo. Read `contract.md` first
-(currently **v4, 2026-08-04** — check §8's changelog); this file assumes it.
+(currently **v7, 2026-10-12**, check §8's changelog); this file assumes it.
 
 ## What this repo is
 
@@ -45,8 +45,8 @@ At runtime, read the live system rather than this copy: `id media`,
 | `/data` mounted as `/data` | every service that touches media |
 | `/data/transcode` → `/transcode` | Jellyfin |
 | `/dev/dri` | Jellyfin only |
-| Ports 8096/5055/6767/7878/8080/8081/8989/9696 | `ports:` and `network_mode: host` |
-| §5.2 bind-address enforcement | `BIND_ADDR_LAN` in `.env`, all seven published ports |
+| Ports 8096/5055/6767/7878/8080/8081/8989/9696/11011 | `ports:` and `network_mode: host` |
+| §5.2 bind-address enforcement | `BIND_ADDR_LAN` in `.env`, all eight published ports |
 | §5.3 Jellyfin never Docker-published | absence of a `ports:` block on `jellyfin` |
 
 These are hardcoded in `compose.yaml` rather than pushed into `.env`
@@ -78,7 +78,7 @@ Things that look like they could be simplified, and should not be:
   `INPUT`, where the host firewall lives. A firewall rule naming a
   Docker-published port is never consulted — it passes review and constrains
   nothing. For published ports the bind address is the only enforcement, so all
-  seven bind `BIND_ADDR_LAN` explicitly. Jellyfin is host-networked, so §5.2
+  eight bind `BIND_ADDR_LAN` explicitly. Jellyfin is host-networked, so §5.2
   does not apply to it and cannot protect it; the firewall is its only layer,
   and that rule is real.
 - **`${BIND_ADDR_LAN:?...}` is load-bearing, not decoration.** Do not replace it
@@ -94,8 +94,9 @@ Things that look like they could be simplified, and should not be:
   no rate limiting and no MFA, and publishing it would bypass the host firewall
   and sit one router forward from the internet in the clear.
 - **The torrent path is behind a compose profile, not deleted.** gluetun,
-  qbittorrent and qbittorrent-port-sync carry `profiles: ["torrents"]`; this
-  deployment ships usenet-only, so 7 services run and 6 ports listen. It is a
+  qbittorrent, qbittorrent-port-sync, flaresolverr and cleanuparr carry
+  `profiles: ["torrents"]`. Without it 7 services run and 6 ports listen.
+  This deployment turns it on, so 12 run and 8 listen. It is a
   profile rather than a second compose file specifically because
   `COMPOSE_PROFILES` in `.env` activates it — meaning enabling torrents never
   requires touching the systemd unit in `palimpsest-system`. Verified. The VPN

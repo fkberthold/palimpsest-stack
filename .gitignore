@@ -18,6 +18,7 @@
 /jellyseerr/
 /sabnzbd/
 /qbittorrent/
+/cleanuparr/
 # gluetun gained a volume mount when the PIA torrent path was wired (it persists
 # the auth token, the forwarded-port lease and a large re-fetchable servers.json).
 # That state is not source — same rule as the dirs above. This list means
