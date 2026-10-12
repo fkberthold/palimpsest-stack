@@ -1020,11 +1020,52 @@ WebUI API from inside gluetun's namespace, the same localhost route the port-syn
 helper uses.
 
 A fake that holds nothing but an executable now sits at 0% and never finishes.
-Sonarr flags it as stalled eventually. Clear it from Activity → Queue with
-**Remove from download client** and **Blocklist Release** both ticked, and Sonarr
-searches again. I suspect most fakes will keep coming from Uindex and
+Cleanuparr clears those (next section). If it misses one, clear it from Activity →
+Queue with **Remove from download client** and **Blocklist Release** both ticked,
+and Sonarr searches again. I suspect most fakes will keep coming from Uindex and
 LimeTorrents, which supplied most of the manually failed releases on the
 blocklist so far.
+
+### Cleanuparr, which clears the fakes for us
+
+Cleanuparr (`http://10.0.0.155:11011`) watches qBittorrent and the Sonarr and
+Radarr queues. When it removes a download it blocklists the release in the arr
+and the arr searches again. It was configured on 2026-10-12 through its API. Its
+settings live in `cleanuparr/cleanuparr.db`, which is gitignored, so a fresh
+clone needs them set again:
+
+| Where | Setting |
+|---|---|
+| Download Clients | qBittorrent at `http://gluetun:8080`, username and password blank |
+| Sonarr | `http://sonarr:8989`, version 4 |
+| Radarr | `http://radarr:7878`, version 6 |
+| Malware Blocker | on, cron `0 0/5 * * * ?`, **Delete if any file is blocked** on |
+| Malware Blocker, Sonarr and Radarr | Blacklist, `https://cleanuparr.pages.dev/static/blacklist` |
+| Queue Cleaner | on, cron `0 0/5 * * * ?`, Downloading Metadata max strikes 3 |
+| Queue Cleaner, failed import | max strikes 3, pattern mode Include, pattern `executable` |
+| Queue Cleaner, stall rule | "Stalled public torrents", public, 0 to 100%, max strikes 6 |
+| General | Internet Connectivity Check on, `https://www.google.com` and `https://1.1.1.1` |
+| Seeker | proactive search off, both instances off |
+
+The qBittorrent credentials are blank on purpose. qBittorrent skips auth for the
+bridge subnet (`WebUI\AuthSubnetWhitelist=172.28.0.0/16`), which is how Sonarr
+gets in too.
+
+The jobs run every 5 minutes, so a stalled public torrent goes after about half
+an hour without progress. Any progress resets its strikes. I think that's slow
+enough to spare a thinly seeded season pack, but if a real one gets dropped,
+raise the stall rule's max strikes first.
+
+The connectivity check matters more than it looks. Without it, an outage like
+the 2026-10-08 cable pull would stall every download at once and Cleanuparr would
+strike them all. With it, its docs say it holds off on strikes while neither URL
+answers.
+
+The Seeker's `searchEnabled` stays on. That's the search after a removal, which
+is what re-grabs a replacement. Proactive search is off because Sonarr already
+searches on its own, and three indexers were rate-limiting us on 2026-10-12.
+
+The API takes the key from **Settings → Account** in an `X-Api-Key` header.
 
 ## What this layer depends on palimpsest-system for
 
