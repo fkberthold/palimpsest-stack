@@ -296,8 +296,7 @@ curl -s https://ipinfo.io/ip
 
 Sonarr and Radarr would then need qBittorrent added at `http://gluetun:8080`
 (**not** `http://qbittorrent:8080` — it has no network identity of its own),
-and their delay profiles changed from usenet-only to preferred-usenet with a
-45-minute torrent delay.
+and their delay profiles changed as described under "Which protocol wins" below.
 
 ### Getting into qBittorrent the first time — two 5.x gotchas
 
@@ -358,10 +357,8 @@ container itself.
    - Download client: SABnzbd at `http://sabnzbd:8080` — **8080, the in-container
      port, not 8081.** 8081 is the host-side mapping and means nothing here.
      Paste SABnzbd's API key.
-   - **Delay profiles** — Settings → Profiles → Delay Profiles: preferred
-     protocol **Usenet**, usenet delay **0**. There is no torrent client, so the
-     torrent delay is irrelevant; if you later enable the torrents profile, set
-     it to 45 minutes so usenet keeps first crack.
+   - **Delay profiles**: Settings → Profiles → Delay Profiles. With the
+     torrents profile on, see "Which protocol wins" under "Turning on torrents".
    - Confirm "Use Hardlinks instead of Copy" is on (Settings → Media Management,
      with Advanced shown). With usenet there is nothing to seed, so the practical
      effect is that same-filesystem imports stay instant instead of becoming
@@ -917,7 +914,7 @@ Should be `media media 775`. If new files land as `root root` or `0644`, the
 | **Jellyfin clients don't auto-discover** | UDP 1900/7359 inbound, LAN only. Opened in palimpsest-system, not here. TCP 8096 working tells you nothing about this. |
 | **Most containers `Exited (128)` after a rebuild or a network drop** | Docker came up with no LAN address, so every published port failed to bind, and Docker doesn't retry that. Run `docker compose up -d` once the lease is back. Seen 2026-10-08, when a rebuild ran with the cable out. |
 | **gluetun loops on `default route not found`** | Its bridge endpoint wedged when its port publish failed, and a restart doesn't clear it. Recreate it along with its two dependents: `docker compose up -d --force-recreate gluetun qbittorrent qbittorrent-port-sync`. |
-| **Containers show `Up` but Sonarr and friends are unreachable, and nothing grabs** | `docker ps` shows them running with an empty Ports column and no network attached, so they have no published port and no route out. Sonarr then reports every indexer and download client as failed, which reads like a config problem and isn't one. Recreate the affected services, for example `docker compose up -d --force-recreate prowlarr sonarr radarr bazarr sabnzbd jellyseerr`. Seen 2026-10-12. I suspect the 2026-10-08 recovery left them this way, since they'd been up since about then. |
+| **Containers show `Up` but Sonarr and friends are unreachable, and nothing grabs** | `docker ps` shows them running with an empty Ports column and no network attached, so they have no published port and no route out. Sonarr then reports every indexer and download client as failed, which reads like a config problem and isn't one. Recreate the affected services, for example `docker compose up -d --force-recreate prowlarr sonarr radarr bazarr sabnzbd jellyseerr`. Seen 2026-10-12. I suspect the 2026-10-08 recovery left them this way, since they'd been up since about then. A milder form hit FlareSolverr the same day: networked, but nothing resolved inside it (`docker exec flaresolverr getent hosts google.com` printed nothing), so every Cloudflare-fronted indexer failed with a 500. Recreating it fixed that too. |
 | **qBittorrent unreachable** | Check gluetun first: `docker compose ps gluetun` (must be `healthy`), then its logs. qBittorrent cannot start until gluetun is healthy, by design. |
 | **qBittorrent says "Unauthorized" with correct credentials** | Host-header validation, not authentication. Add the LAN address to Server domains, or untick "Validate HTTP Host header". See the bring-up section. |
 | **qBittorrent password rejected after a restart** | The generated temporary password is regenerated every start until you set a permanent one. `docker compose logs qbittorrent \| grep -i password`. |
@@ -946,6 +943,28 @@ indexer behind Cloudflare answers Prowlarr with "blocked by CloudFlare
 Protection" until Prowlarr routes to it through FlareSolverr. It is added in
 Prowlarr as an indexer proxy at `http://flaresolverr:8191` with a tag, and every
 indexer carrying that tag routes through it. Internal only, no published port.
+
+FlareSolverr is on the bridge, not behind the VPN, so sites see the home IP. As
+of 2026-10-12 1337x's Cloudflare blocks that IP outright ("Probably your IP is
+banned"), so 1337x is disabled in Prowlarr. Uindex and EZTV get through.
+
+### Which protocol wins
+
+Torrents first, with usenet as the fallback, because usenet costs block credits.
+Both Sonarr and Radarr have:
+
+- **Delay profile**: preferred protocol Torrent, torrent delay 0, usenet delay
+  1440 minutes.
+- **Media Management → Propers and Repacks**: Do Not Prefer.
+
+Preferring torrents isn't enough on its own. The arrs rank quality first, then
+revision, and protocol only breaks a tie after both. A usenet PROPER beat every
+torrent of the same quality. I suspect that's how a Thor (2011) PROPER went to
+SABnzbd on 2026-10-07. Worse, when the torrent indexers are failing, usenet is
+the only result and gets grabbed at once. The 24-hour usenet delay holds a
+usenet-only release long enough for the torrent indexers to recover. I think
+most of the burned credits came from that second case, since 1337x, Uindex,
+EZTV and Internet Archive had all been failing for hours at a time.
 
 **How it is wired.** PIA over OpenVPN, verified against gluetun v3.41.3 on
 2026-08-11. The provider, protocol, region (`CA Montreal`) and port forwarding
