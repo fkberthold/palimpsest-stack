@@ -613,6 +613,50 @@ then the next scan filed all six under Season 2). Don't chase it.
 `host.docker.internal` to the bridge gateway, which is what makes that hostname
 resolve at all. A container without that entry cannot reach Jellyfin by name.
 
+## When a show name belongs to more than one series
+
+Sonarr and Jellyfin identify a series independently, and they can disagree. Sonarr
+matches TVDB by the ID you picked when you added the show. Jellyfin matches by reading
+the folder name off disk. A folder called `Doctor Who` gives it nothing to work with,
+so it guesses, and it takes the most popular match.
+
+On 2026-09-16 that put the 1963 series on disk and the 2005 series in the library.
+Sonarr held TVDB 76107 (Hartnell) and was importing the right episodes. Jellyfin had
+matched the same folder to TVDB 78804 (Eccleston). Every file kept its name on disk and
+picked up a 2005 title, so `An Unearthly Child` played under the name `Rose`.
+
+The tell is where it stops. 2005 series 1 runs 13 episodes against the classic season's
+42. So episodes 1 to 12 came out with 2005 titles, and everything past 13 fell back to
+its raw filename. If half a season looks renamed and half doesn't, this is why.
+
+Runtimes give it away too. The real `Rose` is 45 minutes. Ours was 23.
+
+The fix is in the folder name. Sonarr's series folder format is now:
+
+```
+{Series TitleYear} [tvdbid-{TvdbId}]
+```
+
+Jellyfin reads the `[tvdbid-]` tag and skips matching, so it can't guess wrong. New
+series get it on add. An existing folder keeps its old name until you edit the series
+path in Sonarr, which moves the files for you.
+
+### Sonarr can't tell the three Doctor Whos apart either
+
+Three separate shows number themselves season 1: 1963, 2005 and 2024. Most releases
+carry no year, so `Doctor Who S01E05` parses the same for all three, and Sonarr takes
+whichever one the indexer hands back. Two modern episodes landed in classic slots that
+way before anyone looked.
+
+Quality alone doesn't close it. Dropping the series to the SD profile stops the 1080p
+grabs, and a 540p WEB-DL of a 2005 episode still walks through. A release profile on a
+`classic-who` tag does hold. It requires a physical-media source term and rejects
+streaming tags, modern years and the modern episode titles.
+
+I suspect this applies to any franchise that rebooted without renaming, so Battlestar
+Galactica and Hawaii Five-0 are worth the same check. Look at the folder name before the
+first import rather than after.
+
 ## Jellyfin transcoding
 
 **Status: applied and verified, 2026-08-05.** The initial bring-up left the
@@ -875,9 +919,14 @@ Should be `media media 775`. If new files land as `root root` or `0644`, the
 | **qBittorrent says "Unauthorized" with correct credentials** | Host-header validation, not authentication. Add the LAN address to Server domains, or untick "Validate HTTP Host header". See the bring-up section. |
 | **qBittorrent password rejected after a restart** | The generated temporary password is regenerated every start until you set a permanent one. `docker compose logs qbittorrent \| grep -i password`. |
 | **qBittorrent reachable but downloads nothing** | Tunnel is up but the killswitch is eating traffic. Check `FIREWALL_OUTBOUND_SUBNETS` matches `DOCKER_SUBNET`. |
+| **A torrent sits at 0% forever** | Likely a fake holding only an executable, which the excluded-file list skips. Check its files in qBittorrent, then remove and blocklist it from Sonarr's queue. See "Fake releases". |
+| **Sonarr queue: `Found executable file with extension: '.exe'`** | A fake release. Remove it from the queue with Remove from download client and Blocklist Release ticked. |
 | **Sonarr/Radarr can't reach qBittorrent** | The host is `gluetun`, not `qbittorrent`. |
 | **Jellyseerr can't reach Jellyfin** | The host is `host.docker.internal`, not `jellyfin`. |
 | **A new series shows in Jellyfin but opens empty, and Jellyseerr never flips to Available** | Refresh-burst race left episodes unlinked. See "Telling Jellyfin about new files". Run one **Scan Media Library**. The 12-hour task also repairs it on its own. |
+| **Episode titles belong to a different era of the show** | Jellyfin matched the folder to the wrong series. Check its Edit screen against Sonarr's TVDB ID. See "When a show name belongs to more than one series". |
+| **Half a season is named, the rest shows filenames** | Same cause. The named half is as long as the series Jellyfin picked by mistake. |
+| **A grab arrives from the wrong series of the same show** | Release names rarely carry a year. Needs a release profile, not a quality profile. |
 | **Imports are slow / disk filling fast** | Hardlinking is broken. Run the in-container check above. This is the expensive failure. |
 | **New files owned by root** | `PUID`/`PGID` did not apply — check you did not add `user:` to a LinuxServer image. |
 
@@ -933,6 +982,46 @@ API call from the LAN needs `-H "Host: localhost"`.
 The `/gluetun` directory holds only a re-fetchable PIA token, so it does not
 need backing up. The old WireGuard and `SERVER_COUNTRIES` lines left in a live
 `.env` from before this change are unused now and can be deleted.
+
+### Fake releases, and the file types qBittorrent refuses
+
+Public torrent indexers carry fakes: a release named like an episode that holds a
+Windows program instead of video. On 2026-09-17 Sonarr grabbed
+`Ted.Lasso.S04E08.1080p.WEB-DL.DDP5.1.x265-FLUX` from Uindex. It was a single
+1 GB `.exe`, and the episode it claimed to be didn't air until 2026-09-23. A
+release that turns up before its air date is a fake.
+
+Sonarr caught it on import (`Found executable file with extension: '.exe'`) and
+parked it in the queue at import pending. Nothing reached the library and nothing
+ran it. But qBittorrent had downloaded it and kept seeding it, so for six days the
+box was handing malware to strangers.
+
+qBittorrent now skips those files at download time. Options → Downloads →
+**Excluded file names** is on, with one pattern per line:
+
+```
+*.exe
+*.scr
+*.lnk
+*.bat
+*.cmd
+*.msi
+*.vbs
+*.ps1
+*.pif
+```
+
+It lives in `qBittorrent.conf` as `Session\ExcludedFileNames`, inside the
+gitignored config dir, so a fresh clone doesn't carry it. It was set through the
+WebUI API from inside gluetun's namespace, the same localhost route the port-sync
+helper uses.
+
+A fake that holds nothing but an executable now sits at 0% and never finishes.
+Sonarr flags it as stalled eventually. Clear it from Activity → Queue with
+**Remove from download client** and **Blocklist Release** both ticked, and Sonarr
+searches again. I suspect most fakes will keep coming from Uindex and
+LimeTorrents, which supplied most of the manually failed releases on the
+blocklist so far.
 
 ## What this layer depends on palimpsest-system for
 
