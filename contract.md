@@ -1,6 +1,6 @@
 # palimpsest — Interface Contract
 
-**Version 4 — 2026-08-04.** Supersedes v3 entirely. See §8 for what changed and why.
+**Version 7, 2026-10-12.** Supersedes v6 entirely. See §8 for what changed and why.
 
 **This is the source of truth.** Both the NixOS configuration and the container stack are built against it. Neither agent may change a value here; if an agent believes a value is wrong, it stops and tells me. Amendments are made by me, in this file, and handed to both sessions — that is how v2 came to exist.
 
@@ -10,12 +10,15 @@ Everything in this file is something *both* halves need to agree on. Anything on
 
 ## 0. Repositories
 
-Two repos, split by layer rather than by tooling.
+Three repos, split by layer rather than by tooling.
 
 | Repo | Checkout | Owns |
 |---|---|---|
 | `palimpsest-system` | `/opt/palimpsest-system` | NixOS config: boot, drivers, users, filesystems, networking, firewall, the systemd unit that runs the stack |
 | `palimpsest-stack` | `/opt/palimpsest-stack` | `compose.yaml`, `.env.example`, application-level configuration |
+| `palimpsest-minecraft` | `/opt/palimpsest-minecraft` | The Minecraft server's `compose.yaml`, its backup and upgrade scripts, and its web panel |
+
+`palimpsest-minecraft` is a second application layer beside the stack, not part of it. It's kept separate so a bad game-server upgrade can't touch the media services. The boundary rules below apply to it the same way they apply to `palimpsest-stack`.
 
 **The boundary is hard.** A session working in one repo does not edit the other. If the stack needs a firewall port opened or a UID changed, it stops and says so — it does not reach into `palimpsest-system`. This is deliberate: these sessions run with permissions skipped, and a boundary that an agent cannot cross is worth more than the convenience of crossing it.
 
@@ -64,8 +67,13 @@ Containers run as `1500:1500` with supplementary group `303`. Every container in
 | `/data/usenet/{incomplete,complete}` | Usenet download target | NixOS tmpfiles |
 | `/data/transcode` | tmpfs, 8 GB | NixOS `fileSystems` |
 | `/opt/palimpsest-stack` | Compose file and per-app config subdirectories | NixOS tmpfiles |
+| `/data/minecraft/server` | Minecraft world, plugins and server config | NixOS tmpfiles |
+| `/opt/palimpsest-minecraft` | Minecraft compose file and scripts | NixOS tmpfiles |
+| `/mnt/mc-backup` | Separate USB drive (ext4, label `mc-backup`) holding the restic repository | NixOS `fileSystems`, by UUID, `nofail` |
 
 All of the above owned `media:media`, mode `0775`.
+
+**`/mnt/mc-backup` sits outside `/data` on purpose.** It's a second disk, and the single-filesystem rule below covers `/data` only. The drive carries a marker file, `.mc-backup-drive`, at its root. The backup job refuses to run without it, because an unmounted `/mnt/mc-backup` is an empty folder on the 100 GB root disk.
 
 **`/data` is a single filesystem and must stay that way.** The automation tools hardlink between `/data/torrents` and `/data/media`; a second mountpoint anywhere inside `/data` breaks that silently. The tmpfs at `/data/transcode` is the sole exception and nothing hardlinks into it.
 
@@ -86,6 +94,8 @@ Containers mount `/data` as `/data` — identical path inside and out. No per-se
 | Unit restart policy, while shipped disabled | **None.** Per-container `restart: unless-stopped` handles recovery. |
 | Unit restart policy, once enabled at boot | `Restart=on-failure`, `RestartSec=30`, `StartLimitIntervalSec=600`, `StartLimitBurst=5` |
 | Enabled at boot | **No, initially.** Ships disabled; I enable it once the stack works. |
+
+**The Minecraft unit is a copy of this one** with two substitutions. Its compose file is `/opt/palimpsest-minecraft/compose.yaml`, and its mount deps are `RequiresMountsFor=/data /opt/palimpsest-minecraft`. It does not require `/mnt/mc-backup`. The game should run with the backup drive unplugged, and the backup job's marker check covers that case instead.
 
 The compose file stays outside the Nix store deliberately: it is the thing that changes most often, and requiring a `nixos-rebuild` per tweak would make the iteration loop miserable. It lives in its own git repo.
 
@@ -125,6 +135,10 @@ The **Enforced by** column is not commentary. It is the difference between a rul
 | 8081/tcp | SABnzbd | LAN only | **Bind address** (Docker-published) |
 | 8989/tcp | Sonarr | LAN only | **Bind address** (Docker-published) |
 | 9696/tcp | Prowlarr | LAN only | **Bind address** (Docker-published) |
+| 11011/tcp | Cleanuparr | LAN only | **Bind address** (Docker-published) |
+| 25565/tcp | Minecraft | **Internet**, via a standing router forward (§5.3) | Host firewall (host networking) |
+| 8765/tcp | Minecraft web panel | LAN only | Host firewall (host networking) |
+| 25575/tcp | Minecraft RCON | Loopback only | Host firewall (no rule, so default-deny drops it) |
 
 Firewall default-deny inbound. LAN means RFC1918 only.
 
@@ -149,8 +163,8 @@ Therefore **every published port binds an explicit address**:
 
 | Class | Bind | Services |
 |---|---|---|
-| Docker-published | `${BIND_ADDR_LAN}:<port>:<port>` | 5055, 6767, 7878, 8080, 8081, 8989, 9696 |
-| Host-networked | not published by Docker; host firewall governs | 8096, 1900, 7359 |
+| Docker-published | `${BIND_ADDR_LAN}:<port>:<port>` | 5055, 6767, 7878, 8080, 8081, 8989, 9696, 11011 |
+| Host-networked | not published by Docker; host firewall governs | 8096, 1900, 7359, 25565, 8765, 25575 |
 
 `BIND_ADDR_LAN` **has no default.** It must be set to this machine's DHCP-reserved LAN address. If it is unset, the substitution yields an invalid port mapping and `docker compose` refuses to start — which is the correct failure: loud, immediate, at bring-up, rather than a service quietly listening on every interface. This is also why the stack unit must wait for an address (§3).
 
@@ -162,8 +176,8 @@ v1 through v3 said "nothing is port-forwarded from the router, ever." That was w
 
 | Rule | Value |
 |---|---|
-| Port forwarded at the router | **443/tcp only** |
-| Never forwarded | **22**, **8096**, and every Docker-published port |
+| Port forwarded at the router | **443/tcp** and **25565/tcp** standing. **8443/tcp** only during a break-glass window, deleted after use |
+| Never forwarded | **22**, **8096**, **8765**, **25575**, and every Docker-published port |
 | TLS | Terminated on `palimpsest` by a host-side reverse proxy (nginx + ACME), declarative in `palimpsest-system` |
 | Jellyfin's own port | Stays **8096, plaintext, LAN-only**. The proxy reaches it locally; the internet never does. |
 | Stack's obligation | Jellyfin remains host-networked and **must not** be Docker-published |
@@ -171,6 +185,10 @@ v1 through v3 said "nothing is port-forwarded from the router, ever." That was w
 **8096 must never be the forwarded port.** It is plaintext HTTP; forwarding it puts the viewer's password and every session token on the open internet in the clear. Jellyfin also has no rate limiting and no MFA, so it is not built to be the process answering the internet directly.
 
 **The host firewall fails closed here, deliberately.** A forwarded packet arrives with its original public source address, so it matches no RFC1918 rule and is dropped. Switching on a forward at the router therefore cannot expose this machine by itself — internet exposure additionally requires a deliberate edit to a version-controlled file. That property is to be preserved.
+
+**The Minecraft server is host-networked so this property holds.** Published through Docker, 25565 would bypass the host firewall (§5.2), and a router forward alone would expose it. Host-networked, it needs the forward *and* a committed firewall rule accepting 25565 from any source. All three Minecraft containers share the host's network: the game, the backup job and the panel. That lets the backup job and the panel reach RCON on `127.0.0.1:25575`, which no firewall rule ever opens. The panel binds `BIND_ADDR_LAN:8765` itself and is accepted from RFC1918 only. It controls Docker, so it must never be forwarded.
+
+**Break-glass access to Jellyseerr.** Jellyseerr's standing posture is LAN-only. For occasional remote use, nginx serves it TLS-terminated on host-bound 8443 at all times, and the internet reaches that port only while a hand-made router forward exists. The forward is created for the occasion and deleted afterward. 5055 itself stays Docker-published and must never be forwarded: §5.2 gives it no host-firewall layer, so a forward to it would go live in plaintext with nothing on this machine consulted.
 
 ## 6. Secrets
 
@@ -226,15 +244,15 @@ Same inode, `links=2`. If this fails, stop — every import silently becomes a f
 ss -ltnp | awk '$4 !~ /^\[/ {print $4}' | sort -u
 ```
 
-No listener on a Docker-published port may show `0.0.0.0:` or `*:`. Every one of the seven must appear on this machine's LAN address and nowhere else. A listener on `0.0.0.0` is the v2 defect returning.
+No listener on a Docker-published port may show `0.0.0.0:` or `*:`. Every one of the eight must appear on this machine's LAN address and nowhere else. A listener on `0.0.0.0` is the v2 defect returning.
 
 **Exposure matches §5.1.** From a LAN host that is *not* on the tailnet:
 
 ```bash
-nmap -Pn -p 22,5055,6767,7878,8080,8081,8096,8989,9696 <palimpsest-lan-ip>
+nmap -Pn -p 22,5055,6767,7878,8080,8081,8096,8989,9696,11011,25565,8765,25575 <palimpsest-lan-ip>
 ```
 
-All of them open, since everything is LAN-reachable by design. Note this scan says nothing about whether §5.2 is implemented correctly — a service bound to `0.0.0.0` and one bound to the LAN address look identical from the LAN. The `ss` check above is the one with teeth. To test §5.3 later, scan from **outside** the network: only 443 may answer.
+All of them open except 25575, which must show filtered. Everything else is LAN-reachable by design. Note this scan says nothing about whether §5.2 is implemented correctly — a service bound to `0.0.0.0` and one bound to the LAN address look identical from the LAN. The `ss` check above is the one with teeth. To test §5.3, scan from **outside** the network: only 443 and 25565 may answer.
 
 **The VPN tunnel actually carries torrent traffic:**
 
@@ -244,6 +262,25 @@ curl -s https://ipinfo.io/ip     # must differ
 ```
 
 ## 8. Changelog
+
+### v7, 2026-10-12
+
+1. **§5.1 and §5.2, Cleanuparr on 11011/tcp.** It's an eighth Docker-published service, LAN only and bound to `BIND_ADDR_LAN` like the other seven. It clears fake and stalled downloads out of qBittorrent and the Sonarr/Radarr queues, and its UI is the only way to configure it. As a Docker-published port it needs no firewall rule, and per §5.2 it must not get one.
+2. **§7.2, the listener check counts eight**, and the LAN `nmap` scan includes 11011.
+
+The system layer still lists seven Docker-published ports in two places, `scripts/verify-contract` and the port table comment in `modules/networking.nix`. Neither breaks anything, but both should name 11011 the next time that repo is worked on. Amended at my direction, and the agent typed it.
+
+### v6, 2026-10-08
+
+1. **§0, a third repo.** `palimpsest-minecraft` runs the Gremlinland Minecraft server beside the media stack, under the same boundary rules.
+2. **§2, three new paths.** `/data/minecraft/server` and `/opt/palimpsest-minecraft` are owned `media:media` like the rest. `/mnt/mc-backup` is a separate USB drive mounted by UUID with `nofail`, and it carries a marker file the backup job checks.
+3. **§3, a second unit** modeled on the stack's. It doesn't require the backup drive.
+4. **§5.1 to §5.3, Minecraft is host-networked.** 25565 is forwarded from the internet, 8765 is LAN only, and RCON on 25575 is loopback only. The design first had 25565 Docker-published and forwarded. That breaks §5.3 twice over, since Docker-published ports are never forwarded and a router forward alone must not expose the box. Host networking keeps both rules intact. Amended at my direction, and the agent typed it.
+5. **Header corrected.** It still read v4 after the v5 amendment.
+
+### v5 — 2026-08-11
+
+1. **§5.3 — break-glass forward for Jellyseerr.** The standing router state still forwards 443 alone. 8443 may be forwarded by hand for a window and deleted after, reaching Jellyseerr TLS-terminated on the host. 5055 stays never-forwarded: it is Docker-published, so the host firewall never sees it (§5.2), and forwarding it would ship the Jellyfin admin password in plaintext. Amended at my direction; the agent typed it.
 
 ### v4 — 2026-08-04
 
