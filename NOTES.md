@@ -964,7 +964,9 @@ SABnzbd on 2026-10-07. Worse, when the torrent indexers are failing, usenet is
 the only result and gets grabbed at once. The 24-hour usenet delay holds a
 usenet-only release long enough for the torrent indexers to recover. I think
 most of the burned credits came from that second case, since 1337x, Uindex,
-EZTV and Internet Archive had all been failing for hours at a time.
+EZTV and Internet Archive had all been failing for hours at a time. Internet
+Archive was removed from Prowlarr on 2026-10-12, since archive.org timed out on
+every query we'd ever sent it.
 
 **How it is wired.** PIA over OpenVPN, verified against gluetun v3.41.3 on
 2026-08-11. The provider, protocol, region (`CA Montreal`) and port forwarding
