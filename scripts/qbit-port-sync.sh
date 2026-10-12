@@ -17,7 +17,9 @@ while true; do
   port=$(curl -fsS --max-time 5 http://localhost:8000/v1/portforward 2>/dev/null \
          | sed -n 's/.*"port":[[:space:]]*\([0-9][0-9]*\).*/\1/p')
 
-  if [ -n "$port" ] && [ "$port" != "$last" ]; then
+  # gluetun reports port 0 while the tunnel reconnects. Pushing that tells
+  # qBittorrent to pick a random port, so skip it and wait for the real one.
+  if [ -n "$port" ] && [ "$port" != "0" ] && [ "$port" != "$last" ]; then
     if curl -fsS --max-time 5 \
          -H "Referer: http://localhost:8080" \
          --data-urlencode "json={\"listen_port\": $port, \"random_port\": false, \"upnp\": false}" \
