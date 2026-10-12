@@ -175,6 +175,18 @@ services:
     image: ghcr.io/fallenbagel/jellyseerr:2.7.3
     container_name: jellyseerr
     user: "1500:1500"                   # contract §1
+    # TMDB is dual-stack (AWS CloudFront serves AAAA records), but this bridge
+    # network has no IPv6 route. Jellyseerr's image is Alpine/musl, and musl
+    # ignores AI_ADDRCONFIG, so getaddrinfo hands Node the IPv6 addresses
+    # anyway; Node's fetch (undici) then tries IPv6, the SYN black-holes, and
+    # every TMDB call times out silently — search returns empty and nothing
+    # reaches Radarr. Disabling IPv6 in the container makes the IPv6 attempt
+    # hard-fail instantly so Node falls back to IPv4. The container has no IPv6
+    # connectivity to lose. glibc services (Sonarr/Radarr/Bazarr) filter AAAA
+    # via AI_ADDRCONFIG and are unaffected; this is a musl+Node problem only.
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
     environment:
       TZ: "America/New_York"
       LOG_LEVEL: "info"

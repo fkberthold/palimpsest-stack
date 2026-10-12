@@ -18,8 +18,11 @@
 /jellyseerr/
 /sabnzbd/
 /qbittorrent/
-# gluetun is deliberately absent: it has no volume mount and keeps no state on
-# disk. This list means "services with state" — keep it meaning that.
+# gluetun gained a volume mount when the PIA torrent path was wired (it persists
+# the auth token, the forwarded-port lease and a large re-fetchable servers.json).
+# That state is not source — same rule as the dirs above. This list means
+# "services with state"; keep it meaning that.
+/gluetun/
 
 # Editor / OS noise
 *.swp
