@@ -962,8 +962,13 @@ revision, and protocol only breaks a tie after both. A usenet PROPER beat every
 torrent of the same quality. I suspect that's how a Thor (2011) PROPER went to
 SABnzbd on 2026-10-07. Worse, when the torrent indexers are failing, usenet is
 the only result and gets grabbed at once. The 24-hour usenet delay holds a
-usenet-only release long enough for the torrent indexers to recover. I think
-most of the burned credits came from that second case, since 1337x, Uindex,
+usenet-only release long enough for the torrent indexers to recover, but only
+for new releases. As far as I can tell the delay counts from when the release
+was posted, so for a film from 2010 every usenet release is already past it.
+On the back catalog the delay does nothing, and usenet wins whenever no torrent
+qualifies. That's what happened on 2026-10-14 (see the Cleanuparr section).
+
+I think most of the burned credits came from that second case, since 1337x, Uindex,
 EZTV and Internet Archive had all been failing for hours at a time. Internet
 Archive was removed from Prowlarr on 2026-10-12, since archive.org timed out on
 every query we'd ever sent it.
@@ -1060,9 +1065,9 @@ clone needs them set again:
 | Download Clients | qBittorrent at `http://gluetun:8080`, username and password blank |
 | Sonarr | `http://sonarr:8989`, version 4 |
 | Radarr | `http://radarr:7878`, version 6 |
-| Malware Blocker | on, cron `0 0/5 * * * ?`, **Delete if any file is blocked** on |
+| Malware Blocker | on, cron `0 0/5 * * * ?`, **Delete if any file is blocked** off |
 | Malware Blocker, Sonarr and Radarr | Blacklist, `https://cleanuparr.pages.dev/static/blacklist` |
-| Queue Cleaner | on, cron `0 0/5 * * * ?`, Downloading Metadata max strikes 3 |
+| Queue Cleaner | on, cron `0 0/5 * * * ?`, Downloading Metadata max strikes 12 |
 | Queue Cleaner, failed import | max strikes 3, pattern mode Include, pattern `executable` |
 | Queue Cleaner, stall rule | "Stalled public torrents", public, 0 to 100%, max strikes 6 |
 | General | Internet Connectivity Check on, `https://www.google.com` and `https://1.1.1.1` |
@@ -1076,6 +1081,24 @@ The jobs run every 5 minutes, so a stalled public torrent goes after about half
 an hour without progress. Any progress resets its strikes. I think that's slow
 enough to spare a thinly seeded season pack, but if a real one gets dropped,
 raise the stall rule's max strikes first.
+
+The first settings were too eager, and on 2026-10-13 and 14 they cleared out
+good torrents. Radarr blocklisted 68 of them, and RED, RED 2 and The Bridge on
+the River Kwai fell through to usenet. Two settings did it:
+
+- **Delete if any file is blocked** threw out every YTS and YIFY release. I
+  suspect it's the advert `.jpg` and `.txt` those groups bundle in. With it
+  off, the blocked files are skipped and the torrent goes only when every file
+  is blocked, which still catches an `.exe`-only fake.
+- **Downloading Metadata at 3 strikes** removed anything that hadn't fetched
+  metadata within 15 minutes. qBittorrent then allowed only 5 active torrents
+  (3 downloading), so a fresh grab could sit queued past that. It's 12 strikes
+  (an hour) now, and qBittorrent allows 6 downloading, 30 seeding and 40 in
+  all, with slow torrents not counted against those limits.
+
+The 68 blocklist entries were cleared on 2026-10-21, leaving the deliberate
+RiffTrax one for The Sixth Sense. Check Radarr's blocklist for a run of
+"Manually marked as failed" if this happens again.
 
 The connectivity check matters more than it looks. Without it, an outage like
 the 2026-10-08 cable pull would stall every download at once and Cleanuparr would
