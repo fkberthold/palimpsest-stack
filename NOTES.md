@@ -527,9 +527,24 @@ Add New (`/data/media/movies`). Two settings account for most confusion:
 
 - **Monitoring** is the "do I want this?" switch. Nothing unmonitored is ever
   searched for. A show sitting in the list doing nothing is usually this.
-- **Quality Profile** is the accepted range. Stay at 1080p without a specific
-  reason: 4K forces a transcode on most clients, which is a thing the iGPU
-  passthrough exists to survive, not to do continuously.
+- **Quality Profile** is the accepted range. Use **Flexible**, the default in
+  Jellyseerr and on every series and every movie added since 2026-10-21. See
+  below.
+
+**The Flexible profile** (ID 7 in both Sonarr and Radarr) takes the best
+release it can find and stops there. It ranks 1080p, then 720p, then SD (480p
+and DVD), and within each tier BluRay, WEB-DL, WEBRip and HDTV count as equal,
+so seeders and the torrent preference choose. Upgrades are off, so a 720p grab
+isn't replaced when a 1080p one turns up later.
+
+It leaves out Remux, BR-DISK, 2160p, and theater captures (CAM, telesync,
+screeners). We mostly watch remotely at about 1.5 Mbps, where none of the
+difference shows, and a Remux runs to 35 GB and has to be transcoded anyway.
+
+It replaced HD-1080p, which only took 1080p. Too many films had a torrent at
+720p and nothing at 1080p, so they waited or went to usenet. Movies that
+already had a file stayed on HD-1080p. With upgrades off on both, that changes
+nothing for them.
 
 **Test with something old and popular first.** Retention and indexer coverage
 are best for well-known older material, so a ten-year-old film tests your
