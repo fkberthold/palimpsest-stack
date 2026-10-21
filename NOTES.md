@@ -950,8 +950,16 @@ banned"), so 1337x is disabled in Prowlarr. Uindex and EZTV get through.
 
 ### Which protocol wins
 
-Torrents first, with usenet as the fallback, because usenet costs block credits.
-Both Sonarr and Radarr have:
+Torrents only, unless someone picks a usenet release by hand, because usenet
+costs block credits. NZBgeek is on a Prowlarr sync profile called "Interactive
+only" (Settings → Apps → Sync Profiles) with RSS and automatic search off, so
+Sonarr and Radarr never grab from it on their own. It still shows up in their
+interactive search. Set it in Prowlarr, not in the arrs, since Prowlarr's sync
+overwrites changes made there. To let usenet grab on its own again, move
+NZBgeek back to the Standard profile.
+
+This changed on 2026-10-21, after it turned out the delay below doesn't cover
+older films. Both Sonarr and Radarr also have:
 
 - **Delay profile**: preferred protocol Torrent, torrent delay 0, usenet delay
   1440 minutes.
