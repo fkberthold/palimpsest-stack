@@ -546,6 +546,25 @@ It replaced HD-1080p, which only took 1080p. Too many films had a torrent at
 already had a file stayed on HD-1080p. With upgrades off on both, that changes
 nothing for them.
 
+**In Sonarr, WEB beats HDTV.** 9-1-1 S10E01 came in as SYNCOPY's HDTV capture,
+and its only audio track was the audio-described mix. Broadcasts carry that
+mix as a second audio track, and as far as I can tell the capture recorded it
+in place of the main one. Nothing in the release name said so. HDTV turns up
+minutes after airing, so with upgrades off it won every new episode. Three
+settings, Sonarr only, change that (2026-10-23):
+
+- Custom format **WEB** (WEB-DL or WEBRip) scores +100 on Flexible.
+- Custom format **Audio description** scores -10000, which refuses it.
+- The delay profile holds torrents 6 hours, skipped at score 100 or more.
+
+So a WEB release grabs as soon as it shows, and HDTV only wins if nothing WEB
+turns up in 6 hours. **Bypass if highest quality** is off on purpose.
+HDTV-1080p sits in the same 1080p group as WEB-DL, so with it on, HDTV skipped
+the delay. The audio description format matches tags like `DDP5.1.AD`, `DVS`
+or `Audio Description` in the name. It wouldn't have caught SYNCOPY's release,
+but it's free. Check a title against it with `GET /api/v3/parse?title=...`,
+using a real series name, since the score is 0 when no series matches.
+
 **Test with something old and popular first.** Retention and indexer coverage
 are best for well-known older material, so a ten-year-old film tests your
 pipeline rather than testing whether the release exists at all.
