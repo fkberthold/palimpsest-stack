@@ -565,6 +565,11 @@ or `Audio Description` in the name. It wouldn't have caught SYNCOPY's release,
 but it's free. Check a title against it with `GET /api/v3/parse?title=...`,
 using a real series name, since the score is 0 when no series matches.
 
+A third format, **No English**, scores -10000 when the parsed languages leave
+English out (2026-11-24). Sonarr grabbed French dubs of three Doctor Who
+episodes without it. A release with no language in its name parses as Unknown
+and passes, and so do DUAL and MULTI releases.
+
 **Test with something old and popular first.** Retention and indexer coverage
 are best for well-known older material, so a ten-year-old film tests your
 pipeline rather than testing whether the release exists at all.
