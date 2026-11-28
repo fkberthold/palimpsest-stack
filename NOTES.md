@@ -991,41 +991,48 @@ banned"), so 1337x is disabled in Prowlarr. Uindex and EZTV get through.
 
 ### Which protocol wins
 
-Torrents only, unless someone picks a usenet release by hand, because usenet
-costs block credits. NZBgeek is on a Prowlarr sync profile called "Interactive
-only" (Settings → Apps → Sync Profiles) with RSS and automatic search off, so
-Sonarr and Radarr never grab from it on their own. It still shows up in their
-interactive search. Set it in Prowlarr, not in the arrs, since Prowlarr's sync
-overwrites changes made there. To let usenet grab on its own again, move
-NZBgeek back to the Standard profile.
+Usenet first, torrents as the fallback (2026-11-27). Quality still decides
+before protocol does, so a 1080p torrent beats a 720p usenet release. Protocol
+only breaks a tie.
 
-This changed on 2026-10-21, after it turned out the delay below doesn't cover
-older films. Both Sonarr and Radarr also have:
+NewsDemon is now an unlimited plan, $48 for two years and then $45 every two
+years, so usenet costs nothing per download. It's also faster. SABnzbd isn't
+behind the VPN, so it gets the full home line (about 67 Mbps against about
+40 through PIA on a good night), with no seeders to wait on. When a release is
+missing articles, SABnzbd gives up within minutes (`fail_hopeless_jobs = 1`),
+and the arrs blocklist it and search again. That retry usually lands on a
+torrent. Popular titles are the ones that go missing, since takedowns hit them
+first, and those are what torrents cover best.
 
-- **Delay profile**: preferred protocol Torrent, torrent delay 0, usenet delay
-  1440 minutes.
-- **Media Management → Propers and Repacks**: Do Not Prefer.
+The settings:
 
-Preferring torrents isn't enough on its own. The arrs rank quality first, then
-revision, and protocol only breaks a tie after both. A usenet PROPER beat every
-torrent of the same quality. I suspect that's how a Thor (2011) PROPER went to
-SABnzbd on 2026-10-07. Worse, when the torrent indexers are failing, usenet is
-the only result and gets grabbed at once. The 24-hour usenet delay holds a
-usenet-only release long enough for the torrent indexers to recover, but only
-for new releases. As far as I can tell the delay counts from when the release
-was posted, so for a film from 2010 every usenet release is already past it.
-On the back catalog the delay does nothing, and usenet wins whenever no torrent
-qualifies. That's what happened on 2026-10-14 (see the Cleanuparr section).
+- **Prowlarr**: NZBgeek on the Standard sync profile. Set it there, not in the
+  arrs, since Prowlarr's sync overwrites changes made in them.
+- **Delay profile, both arrs**: preferred protocol Usenet, usenet delay 0.
+  Radarr's torrent delay is 0. Sonarr's is 360 minutes, skipped at a custom
+  format score of 100 or more, which is what keeps HDTV captures from winning.
+- **SABnzbd**: 20 connections to news.newsdemon.com (the plan allows 50).
+- **Media Management → Propers and Repacks**: Do Not Prefer, in both arrs.
 
-I think most of the burned credits came from that second case, since 1337x, Uindex,
-EZTV and Internet Archive had all been failing for hours at a time. Internet
-Archive was removed from Prowlarr on 2026-10-12, since archive.org timed out on
-every query we'd ever sent it.
+If NZBgeek's subscription lapses, usenet searches come back empty and
+everything falls back to torrents without complaint. A sudden run of torrent
+grabs is the hint to check the account.
+
+**History.** Until 2026-11-27 NewsDemon was a block plan, so usenet was
+interactive-only (a Prowlarr sync profile called "Interactive only") with a
+1440-minute usenet delay. The delay turned out not to protect the back
+catalog. As far as I can tell it counts from when a release was posted, so
+every usenet release of an old film is already past it, and usenet won
+whenever no torrent qualified. Most of the burned credits came from that,
+while 1337x, Uindex, EZTV and Internet Archive were failing for hours at a
+time. Internet Archive was removed from Prowlarr on 2026-10-12, since it timed
+out on every query we'd ever sent it.
 
 **How it is wired.** PIA over OpenVPN, verified against gluetun v3.41.3 on
-2026-08-11. The provider, protocol, region (`CA Montreal`) and port forwarding
-are hardcoded in `compose.yaml`; only the PIA account credentials live in
-`.env`. OpenVPN, not WireGuard: PIA hands out no static WireGuard config, and
+2026-08-11. The provider, protocol and port forwarding are hardcoded in
+`compose.yaml`. The region comes from `SERVER_REGIONS` in `.env`, now
+`CA Toronto,CA Ontario` (see the troubleshooting table), and the PIA account
+credentials live there too. OpenVPN, not WireGuard: PIA hands out no static WireGuard config, and
 OpenVPN is the path gluetun natively integrates with PIA's port-forwarding API.
 `VPN_PORT_FORWARDING_PROVIDER` has to be named even though the provider already
 is, or no port is requested. The `/opt/palimpsest-stack/gluetun` mount persists
