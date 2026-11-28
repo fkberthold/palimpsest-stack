@@ -1,7 +1,7 @@
 # CLAUDE.md — palimpsest-stack
 
 Guidance for future sessions working in this repo. Read `contract.md` first
-(currently **v7, 2026-10-12**, check §8's changelog); this file assumes it.
+(currently **v8, 2026-11-27**, check §8's changelog); this file assumes it.
 
 ## What this repo is
 

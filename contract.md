@@ -1,6 +1,6 @@
 # palimpsest — Interface Contract
 
-**Version 7, 2026-10-12.** Supersedes v6 entirely. See §8 for what changed and why.
+**Version 8, 2026-11-27.** Supersedes v7 entirely. See §8 for what changed and why.
 
 **This is the source of truth.** Both the NixOS configuration and the container stack are built against it. Neither agent may change a value here; if an agent believes a value is wrong, it stops and tells me. Amendments are made by me, in this file, and handed to both sessions — that is how v2 came to exist.
 
@@ -67,11 +67,13 @@ Containers run as `1500:1500` with supplementary group `303`. Every container in
 | `/data/usenet/{incomplete,complete}` | Usenet download target | NixOS tmpfiles |
 | `/data/transcode` | tmpfs, 8 GB | NixOS `fileSystems` |
 | `/opt/palimpsest-stack` | Compose file and per-app config subdirectories | NixOS tmpfiles |
-| `/data/minecraft/server` | Minecraft world, plugins and server config | NixOS tmpfiles |
+| `/srv/minecraft/server` | Minecraft world, plugins and server config, on the root filesystem | NixOS tmpfiles |
 | `/opt/palimpsest-minecraft` | Minecraft compose file and scripts | NixOS tmpfiles |
 | `/mnt/mc-backup` | Separate USB drive (ext4, label `mc-backup`) holding the restic repository | NixOS `fileSystems`, by UUID, `nofail` |
 
 All of the above owned `media:media`, mode `0775`.
+
+**`/srv/minecraft` sits outside `/data` on purpose.** The world is small (about 5 GB in November 2026) and wants the NVMe, while `/data` is moving to a USB hard drive. Keeping it on the root filesystem also means the game doesn't depend on that drive. Nothing hardlinks into it, so the single-filesystem rule doesn't apply.
 
 **`/mnt/mc-backup` sits outside `/data` on purpose.** It's a second disk, and the single-filesystem rule below covers `/data` only. The drive carries a marker file, `.mc-backup-drive`, at its root. The backup job refuses to run without it, because an unmounted `/mnt/mc-backup` is an empty folder on the 100 GB root disk.
 
@@ -95,7 +97,7 @@ Containers mount `/data` as `/data` — identical path inside and out. No per-se
 | Unit restart policy, once enabled at boot | `Restart=on-failure`, `RestartSec=30`, `StartLimitIntervalSec=600`, `StartLimitBurst=5` |
 | Enabled at boot | **No, initially.** Ships disabled; I enable it once the stack works. |
 
-**The Minecraft unit is a copy of this one** with two substitutions. Its compose file is `/opt/palimpsest-minecraft/compose.yaml`, and its mount deps are `RequiresMountsFor=/data /opt/palimpsest-minecraft`. It does not require `/mnt/mc-backup`. The game should run with the backup drive unplugged, and the backup job's marker check covers that case instead.
+**The Minecraft unit is a copy of this one** with two substitutions. Its compose file is `/opt/palimpsest-minecraft/compose.yaml`, and its mount deps are `RequiresMountsFor=/opt/palimpsest-minecraft`. It does not require `/data`. It does not require `/mnt/mc-backup`. The game should run with the backup drive unplugged, and the backup job's marker check covers that case instead.
 
 The compose file stays outside the Nix store deliberately: it is the thing that changes most often, and requiring a `nixos-rebuild` per tweak would make the iteration loop miserable. It lives in its own git repo.
 
@@ -262,6 +264,13 @@ curl -s https://ipinfo.io/ip     # must differ
 ```
 
 ## 8. Changelog
+
+### v8, 2026-11-27
+
+1. **§2, the Minecraft world moves to `/srv/minecraft/server`.** It was `/data/minecraft/server`. `/data` is moving from the NVMe to a USB desktop hard drive, and there's no reason for a 5 GB game world to follow it onto a spinning disk. `/srv` is on the root filesystem, which stays on the NVMe. It's owned `media:media`, mode `0775`, like the rest.
+2. **§3, the Minecraft unit no longer requires `/data`.** Its mount deps shrink to `/opt/palimpsest-minecraft`. A failed or unplugged media drive now stops the media stack and leaves the game running.
+
+`/data` itself doesn't change. It still mounts by the label `palimpsest-data`, so moving it to the new drive needs no contract change. Amended at my direction, and the agent typed it.
 
 ### v7, 2026-10-12
 
